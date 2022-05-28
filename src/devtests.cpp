@@ -17,7 +17,13 @@
 
 #include <tf2_eigen/tf2_eigen.h>
 #include <geometry_msgs/Pose.h>
+#include <visualization_msgs/Marker.h>
 #include <Eigen/Geometry>
+
+#include <algorithm>
+#include <utility>
+#include <boost/graph/graph_traits.hpp>
+#include <boost/graph/adjacency_list.hpp>
 
 class Node
 {
@@ -72,11 +78,11 @@ int closestIndex(Node n, std::vector<Node> vec)
     int ret = -1;
     for (std::size_t i = 0; i < vec.size(); i++)
     {
-        double dist = nodeDistance(n, vec[i])
+        double dist = nodeDistance(n, vec[i]);
         if (min < 0 || dist < min)
         {
             min = dist;
-            ret = i;
+            ret = int(i);
         }
     }
     return ret;
@@ -116,75 +122,121 @@ int main(int argc, char **argv)
         ROS_INFO("Joint %s: %f", joint_names[i].c_str(), joint_values[i]);
     }
 
-    bool ik = false;
-    if (ik)
+    // Store nodes
+    std::vector<Node> nodes;
+
+    // Set up types for graph
+    struct Vertex {Node* ptr;};
+    typedef boost::adjacency_list<boost::vecS, boost::vecS, boost::undirectedS, Vertex, double> graph_t;
+    typedef boost::graph_traits<graph_t>::vertex_descriptor vertex_t;
+    typedef boost::graph_traits<graph_t>::edge_descriptor edge_t;
+    graph_t G;
+
+    // Set up message to publish lines
+    visualization_msgs::Marker line_list;
+    line_list.header.frame_id = "panda_link0";
+    line_list.id = 0;
+    line_list.type = visualization_msgs::Marker::LINE_LIST;
+    line_list.scale.x = 0.01;
+    line_list.color.g = 1.0;
+    line_list.color.a = 1.0;
+
+    ros::Publisher state_pub = n.advertise<moveit_msgs::DisplayRobotState>("display_robot_state_test", 1000);
+    ros::Publisher graph_pub = n.advertise<visualization_msgs::Marker>("graph_lines", 1000);
+    ros::Rate loop_rate(30);
+    while (ros::ok())
     {
-        // Pick a random EE point in workspace
-        std::default_random_engine generator;
-        generator.seed(time(NULL));
-        std::uniform_real_distribution<double> distribution(0.0, 1.0);
-        double x = 2 * distribution(generator) - 1.0;  // -1 to 1
-        double y = 2 * distribution(generator) - 1.0;  // -1 to 1
-        double z = distribution(generator);  // 0 to 1
+        line_list.header.stamp = ros::Time::now();
 
-        // Build geometry msg of point
-        geometry_msgs::Pose target_pose1;
-        target_pose1.orientation.w = 1.0;
-        target_pose1.position.x = x;
-        target_pose1.position.y = y;
-        target_pose1.position.z = z;
-        ROS_INFO("Point at %f, %f, %f", x, y, z);
-
-        // Try to find an IK solution
-        double timeout = 0.1;
-        bool found_ik = kinematic_state->setFromIK(joint_model_group, target_pose1, timeout);
-
-        if (found_ik)
-        {
-            kinematic_state->copyJointGroupPositions(joint_model_group, joint_values);
-            for (std::size_t i = 0; i < joint_names.size(); ++i)
-            {
-                ROS_INFO("Joint %s: %f", joint_names[i].c_str(), joint_values[i]);
-            }
-        }
-        else
-        {
-            ROS_INFO("No IK solution!");
-        }
-    }
-    else
-    {
         // Pick a random configuration
         kinematic_state->setToRandomPositions(joint_model_group);
         Eigen::Affine3d end_effector = kinematic_state->getGlobalLinkTransform("panda_link8");
         geometry_msgs::Pose ee_pose = tf2::toMsg(end_effector);
 
         ROS_INFO("Point at %f, %f, %f", ee_pose.position.x, ee_pose.position.y, ee_pose.position.z);
-    }
 
-    // Check proposed state for collisions
-    collision_detection::CollisionRequest collision_request;
-    collision_request.verbose = true;
-    collision_detection::CollisionResult collision_result;
+        Node* thisNodePtr = new Node(*kinematic_state, ee_pose);
+        nodes.push_back(*thisNodePtr);
+        Vertex thisVertex = {thisNodePtr};
 
-    // Because planning_scene is constructed from kinematic_model, this
-    // request implicitly checks the current kinematic state?
-    planning_scene_monitor::LockedPlanningSceneRO(psm)->checkCollision(collision_request, collision_result, *kinematic_state);
+        double min = -1.0;
+        graph_t::vertex_iterator v, vend, vclosest;
+        for (boost::tie(v, vend) = boost::vertices(G); v != vend; ++v)
+        {
+            Vertex otherVertex = G[*v];
+            Node otherNode = *(otherVertex.ptr);
 
-    ROS_INFO_STREAM("Collision result is " << (collision_result.collision ? "true": "false"));
+            double thisxyz[3];
+            double otherxyz[3];
+            thisNodePtr->fillCartesian(thisxyz);
+            otherNode.fillCartesian(otherxyz);
+            ROS_INFO("This: %f, %f, %f", thisxyz[0], thisxyz[1], thisxyz[2]);
+            ROS_INFO("Other: %f, %f, %f", otherxyz[0], otherxyz[1], otherxyz[2]);
 
-    // Convert new state to a message
-    moveit_msgs::RobotState state_msg;
-    moveit::core::robotStateToRobotStateMsg(*kinematic_state, state_msg);
-    moveit_msgs::DisplayRobotState display_msg;
-    display_msg.state = state_msg;
+            double dist = nodeDistance(*thisNodePtr, otherNode);
+            if (min < 0 || dist < min)
+            {
+                min = dist;
+                vclosest = v;
+            }
+        }
 
-    // Attempt to publish new state
-    ros::Publisher state_pub = n.advertise<moveit_msgs::DisplayRobotState>("display_robot_state_test", 1000);
-    ros::Rate loop_rate(10);
-    while (ros::ok())
-    {
+        if (min < 0)
+        {
+            ROS_INFO("This is the first node!");
+            vertex_t thisVertexDesc = boost::add_vertex(thisVertex, G);
+        }
+        else
+        {
+            ROS_INFO("Adding an edge with distance %f!", min);
+            vertex_t otherVertexDesc = *vclosest;
+            vertex_t thisVertexDesc = boost::add_vertex(thisVertex, G);
+            boost::add_edge(thisVertexDesc, otherVertexDesc, min, G);
+
+            // Reclaim closest node
+            Vertex otherVertex = G[*vclosest];
+            Node otherNode = *(otherVertex.ptr);
+
+            // Visualize this edge
+            geometry_msgs::Point thisPoint = thisNodePtr->getPose().position;
+            geometry_msgs::Point otherPoint = otherNode.getPose().position;
+            line_list.points.push_back(thisPoint);
+            line_list.points.push_back(otherPoint);
+        }
+
+//        // Find closest existing node
+//        int neighbor = closestIndex(thisNode, nodes);
+//        if (neighbor == -1)
+//        {
+//            ROS_INFO("This is the first node!");
+//        }
+//        else
+//        {
+//            Node otherNode = nodes[neighbor];
+//            ROS_INFO("This node's neighbor is %d with distance %f", neighbor, nodeDistance(thisNode, otherNode));
+//        }
+//        nodes.push_back(thisNode);
+
+        // Check proposed state for collisions
+        collision_detection::CollisionRequest collision_request;
+        collision_request.verbose = true;
+        collision_detection::CollisionResult collision_result;
+
+        // Because planning_scene is constructed from kinematic_model, this
+        // request implicitly checks the current kinematic state?
+        planning_scene_monitor::LockedPlanningSceneRO(psm)->checkCollision(collision_request, collision_result, *kinematic_state);
+
+        ROS_INFO_STREAM("Collision result is " << (collision_result.collision ? "true": "false"));
+
+        // Convert new state to a message
+        moveit_msgs::RobotState state_msg;
+        moveit::core::robotStateToRobotStateMsg(*kinematic_state, state_msg);
+        moveit_msgs::DisplayRobotState display_msg;
+        display_msg.state = state_msg;
+
+        // Attempt to publish new state
         state_pub.publish(display_msg);
+        graph_pub.publish(line_list);
         ros::spinOnce();
         loop_rate.sleep();
     }

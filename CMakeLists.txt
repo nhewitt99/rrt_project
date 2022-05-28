@@ -35,6 +35,7 @@ find_package(catkin REQUIRED COMPONENTS
   tf2_eigen
   tf2_geometry_msgs
   tf2_ros
+  visualization_msgs
   xacro
 )
 
