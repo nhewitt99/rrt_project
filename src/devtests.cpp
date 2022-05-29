@@ -203,7 +203,7 @@ std::vector<moveit::core::RobotStatePtr> interpolateStates(
     std::vector<double> increments;
     for (int i = 0; i < current_values.size(); i++)
     {
-        increments.push_back((current_values[i] - end_values[i]) / n);
+        increments.push_back((end_values[i] - current_values[i]) / n);
     }
 
     // Generate states
@@ -227,6 +227,61 @@ std::vector<moveit::core::RobotStatePtr> interpolateStates(
 
     return ret;
 };
+
+
+// Generate a state that extends towards another in c-space, less than some length in rads
+moveit::core::RobotStatePtr extend(const moveit::core::RobotModelConstPtr& kinematic_model,
+                                   moveit::core::RobotStatePtr state1,
+                                   moveit::core::RobotStatePtr state2, double max=0.5)
+{
+    // Get joint parameters from model
+    const moveit::core::JointModelGroup* joint_model_group = kinematic_model->getJointModelGroup("panda_arm");
+
+    // Get joint values for start and end
+    std::vector<double> current_values;
+    std::vector<double> end_values;
+    state1->copyJointGroupPositions(joint_model_group, current_values);
+    state2->copyJointGroupPositions(joint_model_group, end_values);
+
+    // Get difference
+    std::vector<double> diff_values;
+    double magnitude = 0;
+    for (int i = 0; i < current_values.size(); i++)
+    {
+        double diff = end_values[i] - current_values[i];
+        diff_values.push_back(diff);
+        magnitude += pow(diff, 2);
+    }
+    magnitude = sqrt(magnitude);
+
+    // Return if already less than max
+    if (magnitude <= max)
+    {
+        return state2;
+    }
+    else
+    {
+        // Normalize and scale differences to max
+        for (auto& diff : diff_values)
+        {
+            diff = max * diff / magnitude;
+        }
+
+        // Create new state by adding scaled differences to start
+        moveit::core::RobotStatePtr new_state(new moveit::core::RobotState(kinematic_model));
+        new_state->setToDefaultValues();  // without this, fingers are at like 10^243 and crash rviz
+
+        // Set joints to next value
+        for (int i = 0; i < current_values.size(); i++)
+        {
+            current_values[i] = current_values[i] + diff_values[i];
+        }
+        new_state->setJointGroupPositions(joint_model_group, current_values);
+        new_state->enforceBounds();  // just in case
+
+        return new_state;
+    }
+}
 
 
 // Check if an edge is valid between two nodes
@@ -330,9 +385,21 @@ int main(int argc, char **argv)
             // Check whether an edge can be made
             if (edgeValid(psm, kinematic_model, thisNodePtr, otherNodePtr))
             {
-                ROS_INFO("Adding an edge with distance %f!", min);
-                nodes.push_back(*thisNodePtr);
+                ROS_INFO("Adding an edge!");
 
+                // Use extend to move towards new point
+                auto extended_state = extend(kinematic_model, otherNodePtr->getStatePtr(), thisNodePtr->getStatePtr());
+
+                // Generate a pose for the extended point
+                Eigen::Affine3d end_effector = extended_state->getGlobalLinkTransform("panda_link8");
+                geometry_msgs::Pose ee_pose = tf2::toMsg(end_effector);
+
+                // Update the candidate node
+                thisNodePtr = new Node(*extended_state, ee_pose);
+                nodes.push_back(*thisNodePtr);
+                thisVertex = {thisNodePtr};
+
+                // Add edge
                 vertex_t otherVertexDesc = *vclosest;
                 vertex_t thisVertexDesc = boost::add_vertex(thisVertex, G);
                 boost::add_edge(thisVertexDesc, otherVertexDesc, min, G);
