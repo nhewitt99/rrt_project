@@ -204,7 +204,6 @@ std::vector<moveit::core::RobotStatePtr> interpolateStates(
     for (int i = 0; i < current_values.size(); i++)
     {
         increments.push_back((current_values[i] - end_values[i]) / n);
-        ROS_INFO("Joint %d goes from %f to %f and increment is %f", i, current_values[i], end_values[i], increments[i]);
     }
 
     // Generate states
@@ -218,7 +217,6 @@ std::vector<moveit::core::RobotStatePtr> interpolateStates(
         for (int j = 0; j < current_values.size(); j++)
         {
             current_values[j] = current_values[j] + increments[j];
-            ROS_INFO("Joint %d now at %f", j, current_values[j]);
         }
         new_state->setJointGroupPositions(joint_model_group, current_values);
         new_state->enforceBounds();  // just in case
@@ -228,6 +226,17 @@ std::vector<moveit::core::RobotStatePtr> interpolateStates(
     }
 
     return ret;
+};
+
+
+// Check if an edge is valid between two nodes
+bool edgeValid(std::shared_ptr<planning_scene_monitor::PlanningSceneMonitor> psm,
+                const moveit::core::RobotModelConstPtr& kinematic_model, Node* node1, Node* node2)
+{
+    auto state1 = node1->getStatePtr();
+    auto state2 = node2->getStatePtr();
+    auto inter_vec = interpolateStates(kinematic_model, state1, state2);
+    return !checkCollisionMany(psm, inter_vec);
 };
 
 
@@ -288,11 +297,8 @@ int main(int argc, char **argv)
         Eigen::Affine3d end_effector = kinematic_state->getGlobalLinkTransform("panda_link8");
         geometry_msgs::Pose ee_pose = tf2::toMsg(end_effector);
 
-        ROS_INFO("Point at %f, %f, %f", ee_pose.position.x, ee_pose.position.y, ee_pose.position.z);
-
         // Build a node from this configuration, package into a vertex
         Node* thisNodePtr = new Node(*kinematic_state, ee_pose);
-        nodes.push_back(*thisNodePtr);
         Vertex thisVertex = {thisNodePtr};
 
         // Find the closest existing vertex to this one
@@ -301,23 +307,44 @@ int main(int argc, char **argv)
 
         if (min < 0)
         {
-            ROS_INFO("This is the first node!");
-            vertex_t thisVertexDesc = boost::add_vertex(thisVertex, G);
+            // Check whether node is valid
+            if (!checkCollisionOnce(psm, kinematic_state))
+            {
+                ROS_INFO("This is the first node!");
+                ROS_INFO("Point at %f, %f, %f", ee_pose.position.x, ee_pose.position.y, ee_pose.position.z);
+                nodes.push_back(*thisNodePtr);
+
+                vertex_t thisVertexDesc = boost::add_vertex(thisVertex, G);
+            }
+            else
+            {
+                ROS_INFO("This node was invalid!");
+            }
         }
         else
         {
-            ROS_INFO("Adding an edge with distance %f!", min);
-            vertex_t otherVertexDesc = *vclosest;
-            vertex_t thisVertexDesc = boost::add_vertex(thisVertex, G);
-            boost::add_edge(thisVertexDesc, otherVertexDesc, min, G);
-
-            // Visualize edge
+            // Back out a node pointer from closest vertex
             Vertex otherVertex = G[*vclosest];
-            updateLineList(&line_list, thisNodePtr, otherVertex.ptr);
-        }
+            Node* otherNodePtr = otherVertex.ptr;
 
-        bool collision = checkCollisionOnce(psm, kinematic_state);
-        ROS_INFO_STREAM("Collision result is " << (collision ? "true": "false"));
+            // Check whether an edge can be made
+            if (edgeValid(psm, kinematic_model, thisNodePtr, otherNodePtr))
+            {
+                ROS_INFO("Adding an edge with distance %f!", min);
+                nodes.push_back(*thisNodePtr);
+
+                vertex_t otherVertexDesc = *vclosest;
+                vertex_t thisVertexDesc = boost::add_vertex(thisVertex, G);
+                boost::add_edge(thisVertexDesc, otherVertexDesc, min, G);
+
+                // Visualize edge
+                updateLineList(&line_list, thisNodePtr, otherNodePtr);
+            }
+            else
+            {
+                ROS_INFO("The closest edge was invalid!");
+            }
+        }
 
         // Attempt to publish new state
         if (count % 10 == 0)
@@ -328,23 +355,6 @@ int main(int argc, char **argv)
         ros::spinOnce();
         loop_rate.sleep();
         count++;
-
-        bool DEMO_INTERPOLATE = false;
-        if (DEMO_INTERPOLATE && count == 3)
-        {
-            auto state1 = nodes[0].getStatePtr();
-            auto state2 = nodes[1].getStatePtr();
-
-            auto interp_states = interpolateStates(kinematic_model, state1, state2);
-
-            ros::Rate loop_rate(1);
-            for (auto state : interp_states)
-            {
-                state_pub.publish(displayMsgFromKin(state));
-                loop_rate.sleep();
-            }
-            return 0;
-        }
     }
     return 0;
 }
