@@ -39,6 +39,12 @@ class Node
         {
             return state;
         }
+        moveit::core::RobotStatePtr getStatePtr(void)
+        {
+            // Return a pointer to a copy of the state (don't ask why)
+            moveit::core::RobotStatePtr ret(new moveit::core::RobotState(state));
+            return ret;
+        }
         geometry_msgs::Pose getPose(void)
         {
             return ee_pose;
@@ -176,6 +182,55 @@ bool checkCollisionMany(std::shared_ptr<planning_scene_monitor::PlanningSceneMon
 };
 
 
+// Generate interpolated states between two states
+std::vector<moveit::core::RobotStatePtr> interpolateStates(
+                                                const moveit::core::RobotModelConstPtr& kinematic_model,
+                                                moveit::core::RobotStatePtr state1,
+                                                moveit::core::RobotStatePtr state2, int n=10)
+{
+    std::vector<moveit::core::RobotStatePtr> ret;
+
+    // Get joint parameters from model
+    const moveit::core::JointModelGroup* joint_model_group = kinematic_model->getJointModelGroup("panda_arm");
+
+    // Get joint values for start and end
+    std::vector<double> current_values;
+    std::vector<double> end_values;
+    state1->copyJointGroupPositions(joint_model_group, current_values);
+    state2->copyJointGroupPositions(joint_model_group, end_values);
+
+    // Calculate increments
+    std::vector<double> increments;
+    for (int i = 0; i < current_values.size(); i++)
+    {
+        increments.push_back((current_values[i] - end_values[i]) / n);
+        ROS_INFO("Joint %d goes from %f to %f and increment is %f", i, current_values[i], end_values[i], increments[i]);
+    }
+
+    // Generate states
+    for (int i = 0; i < n; i++)
+    {
+        // Create new state
+        moveit::core::RobotStatePtr new_state(new moveit::core::RobotState(kinematic_model));
+        new_state->setToDefaultValues();  // without this, fingers are at like 10^243 and crash rviz
+
+        // Set joints to next value
+        for (int j = 0; j < current_values.size(); j++)
+        {
+            current_values[j] = current_values[j] + increments[j];
+            ROS_INFO("Joint %d now at %f", j, current_values[j]);
+        }
+        new_state->setJointGroupPositions(joint_model_group, current_values);
+        new_state->enforceBounds();  // just in case
+
+        // Add to vector
+        ret.push_back(new_state);
+    }
+
+    return ret;
+};
+
+
 // Convert a kinematic state to a displayable message type
 moveit_msgs::DisplayRobotState displayMsgFromKin(moveit::core::RobotStatePtr kinematic_state)
 {
@@ -206,19 +261,9 @@ int main(int argc, char **argv)
     const moveit::core::RobotModelConstPtr& kinematic_model = psm->getRobotModel();
     ROS_INFO("Model frame: %s", kinematic_model->getModelFrame().c_str());
 
-    // Make a RobotState that maintains a configuration
-    moveit::core::RobotStatePtr kinematic_state(new moveit::core::RobotState(kinematic_model));
-    kinematic_state->setToDefaultValues();
+    // Get joint information from model
     const moveit::core::JointModelGroup* joint_model_group = kinematic_model->getJointModelGroup("panda_arm");
     const std::vector<std::string>& joint_names = joint_model_group->getVariableNames();
-
-    // Get currently stored joint state
-    std::vector<double> joint_values;
-    kinematic_state->copyJointGroupPositions(joint_model_group, joint_values);
-    for (std::size_t i = 0; i < joint_names.size(); ++i)
-    {
-        ROS_INFO("Joint %s: %f", joint_names[i].c_str(), joint_values[i]);
-    }
 
     // Store nodes
     std::vector<Node> nodes;
@@ -237,6 +282,8 @@ int main(int argc, char **argv)
     {
 
         // Pick a random configuration
+        moveit::core::RobotStatePtr kinematic_state(new moveit::core::RobotState(kinematic_model));
+        kinematic_state->setToDefaultValues();  // without this, fingers are at like 10^243 and crash rviz
         kinematic_state->setToRandomPositions(joint_model_group);
         Eigen::Affine3d end_effector = kinematic_state->getGlobalLinkTransform("panda_link8");
         geometry_msgs::Pose ee_pose = tf2::toMsg(end_effector);
@@ -281,6 +328,23 @@ int main(int argc, char **argv)
         ros::spinOnce();
         loop_rate.sleep();
         count++;
+
+        bool DEMO_INTERPOLATE = false;
+        if (DEMO_INTERPOLATE && count == 3)
+        {
+            auto state1 = nodes[0].getStatePtr();
+            auto state2 = nodes[1].getStatePtr();
+
+            auto interp_states = interpolateStates(kinematic_model, state1, state2);
+
+            ros::Rate loop_rate(1);
+            for (auto state : interp_states)
+            {
+                state_pub.publish(displayMsgFromKin(state));
+                loop_rate.sleep();
+            }
+            return 0;
+        }
     }
     return 0;
 }
