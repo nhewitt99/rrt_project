@@ -58,6 +58,8 @@ class Node
 };
 
 
+// Cartesian distance between two nodes
+// TODO: distance in c-space instead
 double nodeDistance(Node n1, Node n2)
 {
     double pt1[3];
@@ -72,21 +74,117 @@ double nodeDistance(Node n1, Node n2)
 };
 
 
-int closestIndex(Node n, std::vector<Node> vec)
+// Set up types for graph
+struct Vertex {Node* ptr;};
+typedef boost::adjacency_list<boost::vecS, boost::vecS, boost::undirectedS, Vertex, double> graph_t;
+typedef boost::graph_traits<graph_t>::vertex_descriptor vertex_t;
+typedef boost::graph_traits<graph_t>::edge_descriptor edge_t;
+
+
+// Return distance to closest vertex, update vclosest to point to it
+double findClosestVertex(graph_t G, Node* thisNodePtr, graph_t::vertex_iterator &vclosest)
 {
     double min = -1.0;
-    int ret = -1;
-    for (std::size_t i = 0; i < vec.size(); i++)
+    graph_t::vertex_iterator v, vend;
+    for (boost::tie(v, vend) = boost::vertices(G); v != vend; ++v)
     {
-        double dist = nodeDistance(n, vec[i]);
+        Vertex otherVertex = G[*v];
+        Node otherNode = *(otherVertex.ptr);
+
+        double thisxyz[3];
+        double otherxyz[3];
+        thisNodePtr->fillCartesian(thisxyz);
+        otherNode.fillCartesian(otherxyz);
+//            ROS_INFO("This: %f, %f, %f", thisxyz[0], thisxyz[1], thisxyz[2]);
+//            ROS_INFO("Other: %f, %f, %f", otherxyz[0], otherxyz[1], otherxyz[2]);
+
+        double dist = nodeDistance(*thisNodePtr, otherNode);
         if (min < 0 || dist < min)
         {
             min = dist;
-            ret = int(i);
+            vclosest = v;
         }
     }
-    return ret;
+    return min;
 };
+
+
+// Boilerplate for a line_list marker
+visualization_msgs::Marker initLineList()
+{
+    visualization_msgs::Marker line_list;
+    line_list.header.frame_id = "panda_link0";
+    line_list.id = 0;
+    line_list.type = visualization_msgs::Marker::LINE_LIST;
+    line_list.scale.x = 0.01;
+    line_list.color.g = 1.0;
+    line_list.color.a = 1.0;
+    return line_list;
+};
+
+
+// Add an edge between two nodes to an existing line_list marker
+void updateLineList(visualization_msgs::Marker* m, Node* node1ptr, Node* node2ptr)
+{
+    m->header.stamp = ros::Time::now();
+
+    geometry_msgs::Point point1 = node1ptr->getPose().position;
+    geometry_msgs::Point point2 = node2ptr->getPose().position;
+    m->points.push_back(point1);
+    m->points.push_back(point2);
+};
+
+
+// Check whether this one robotstate collides (with self or environment) in the planning scene
+bool checkCollisionOnce(std::shared_ptr<planning_scene_monitor::PlanningSceneMonitor> psm,
+                        moveit::core::RobotStatePtr kinematic_state)
+{
+    // Query classes
+    collision_detection::CollisionRequest collision_request;
+    collision_detection::CollisionResult collision_result;
+//    collision_request.verbose = true;
+
+    planning_scene_monitor::LockedPlanningSceneRO(psm)->checkCollision(collision_request, collision_result, *kinematic_state);
+
+    return collision_result.collision;
+};
+
+
+// Check whether at least one state from a list of states collides in the planning scene
+bool checkCollisionMany(std::shared_ptr<planning_scene_monitor::PlanningSceneMonitor> psm,
+                        std::vector<moveit::core::RobotStatePtr> kinematic_state_vec)
+{
+    // Query classes
+    collision_detection::CollisionRequest collision_request;
+    collision_detection::CollisionResult collision_result;
+
+    // Get a readonly copy of planning scene
+    auto locked_psm = planning_scene_monitor::LockedPlanningSceneRO(psm);
+
+    for (auto kinematic_state : kinematic_state_vec)
+    {
+        locked_psm->checkCollision(collision_request, collision_result, *kinematic_state);
+
+        // If at least one collides, return true
+        if (collision_result.collision) return true;
+
+        // Reset query for next check
+        collision_result.clear();
+    }
+
+    return false;
+};
+
+
+// Convert a kinematic state to a displayable message type
+moveit_msgs::DisplayRobotState displayMsgFromKin(moveit::core::RobotStatePtr kinematic_state)
+{
+        moveit_msgs::RobotState state_msg;
+        moveit::core::robotStateToRobotStateMsg(*kinematic_state, state_msg);
+        moveit_msgs::DisplayRobotState display_msg;
+        display_msg.state = state_msg;
+        return display_msg;
+}
 
 
 int main(int argc, char **argv)
@@ -125,28 +223,18 @@ int main(int argc, char **argv)
     // Store nodes
     std::vector<Node> nodes;
 
-    // Set up types for graph
-    struct Vertex {Node* ptr;};
-    typedef boost::adjacency_list<boost::vecS, boost::vecS, boost::undirectedS, Vertex, double> graph_t;
-    typedef boost::graph_traits<graph_t>::vertex_descriptor vertex_t;
-    typedef boost::graph_traits<graph_t>::edge_descriptor edge_t;
+    // Init graph
     graph_t G;
 
     // Set up message to publish lines
-    visualization_msgs::Marker line_list;
-    line_list.header.frame_id = "panda_link0";
-    line_list.id = 0;
-    line_list.type = visualization_msgs::Marker::LINE_LIST;
-    line_list.scale.x = 0.01;
-    line_list.color.g = 1.0;
-    line_list.color.a = 1.0;
+    auto line_list = initLineList();
 
     ros::Publisher state_pub = n.advertise<moveit_msgs::DisplayRobotState>("display_robot_state_test", 1000);
     ros::Publisher graph_pub = n.advertise<visualization_msgs::Marker>("graph_lines", 1000);
-    ros::Rate loop_rate(30);
+    ros::Rate loop_rate(100);
+    int count = 1;
     while (ros::ok())
     {
-        line_list.header.stamp = ros::Time::now();
 
         // Pick a random configuration
         kinematic_state->setToRandomPositions(joint_model_group);
@@ -155,31 +243,14 @@ int main(int argc, char **argv)
 
         ROS_INFO("Point at %f, %f, %f", ee_pose.position.x, ee_pose.position.y, ee_pose.position.z);
 
+        // Build a node from this configuration, package into a vertex
         Node* thisNodePtr = new Node(*kinematic_state, ee_pose);
         nodes.push_back(*thisNodePtr);
         Vertex thisVertex = {thisNodePtr};
 
-        double min = -1.0;
-        graph_t::vertex_iterator v, vend, vclosest;
-        for (boost::tie(v, vend) = boost::vertices(G); v != vend; ++v)
-        {
-            Vertex otherVertex = G[*v];
-            Node otherNode = *(otherVertex.ptr);
-
-            double thisxyz[3];
-            double otherxyz[3];
-            thisNodePtr->fillCartesian(thisxyz);
-            otherNode.fillCartesian(otherxyz);
-            ROS_INFO("This: %f, %f, %f", thisxyz[0], thisxyz[1], thisxyz[2]);
-            ROS_INFO("Other: %f, %f, %f", otherxyz[0], otherxyz[1], otherxyz[2]);
-
-            double dist = nodeDistance(*thisNodePtr, otherNode);
-            if (min < 0 || dist < min)
-            {
-                min = dist;
-                vclosest = v;
-            }
-        }
+        // Find the closest existing vertex to this one
+        graph_t::vertex_iterator vclosest;
+        double min = findClosestVertex(G, thisNodePtr, vclosest);
 
         if (min < 0)
         {
@@ -193,52 +264,23 @@ int main(int argc, char **argv)
             vertex_t thisVertexDesc = boost::add_vertex(thisVertex, G);
             boost::add_edge(thisVertexDesc, otherVertexDesc, min, G);
 
-            // Reclaim closest node
+            // Visualize edge
             Vertex otherVertex = G[*vclosest];
-            Node otherNode = *(otherVertex.ptr);
-
-            // Visualize this edge
-            geometry_msgs::Point thisPoint = thisNodePtr->getPose().position;
-            geometry_msgs::Point otherPoint = otherNode.getPose().position;
-            line_list.points.push_back(thisPoint);
-            line_list.points.push_back(otherPoint);
+            updateLineList(&line_list, thisNodePtr, otherVertex.ptr);
         }
 
-//        // Find closest existing node
-//        int neighbor = closestIndex(thisNode, nodes);
-//        if (neighbor == -1)
-//        {
-//            ROS_INFO("This is the first node!");
-//        }
-//        else
-//        {
-//            Node otherNode = nodes[neighbor];
-//            ROS_INFO("This node's neighbor is %d with distance %f", neighbor, nodeDistance(thisNode, otherNode));
-//        }
-//        nodes.push_back(thisNode);
-
-        // Check proposed state for collisions
-        collision_detection::CollisionRequest collision_request;
-        collision_request.verbose = true;
-        collision_detection::CollisionResult collision_result;
-
-        // Because planning_scene is constructed from kinematic_model, this
-        // request implicitly checks the current kinematic state?
-        planning_scene_monitor::LockedPlanningSceneRO(psm)->checkCollision(collision_request, collision_result, *kinematic_state);
-
-        ROS_INFO_STREAM("Collision result is " << (collision_result.collision ? "true": "false"));
-
-        // Convert new state to a message
-        moveit_msgs::RobotState state_msg;
-        moveit::core::robotStateToRobotStateMsg(*kinematic_state, state_msg);
-        moveit_msgs::DisplayRobotState display_msg;
-        display_msg.state = state_msg;
+        bool collision = checkCollisionOnce(psm, kinematic_state);
+        ROS_INFO_STREAM("Collision result is " << (collision ? "true": "false"));
 
         // Attempt to publish new state
-        state_pub.publish(display_msg);
-        graph_pub.publish(line_list);
+        if (count % 10 == 0)
+        {
+            state_pub.publish(displayMsgFromKin(kinematic_state));
+            graph_pub.publish(line_list);
+        }
         ros::spinOnce();
         loop_rate.sleep();
+        count++;
     }
     return 0;
 }
