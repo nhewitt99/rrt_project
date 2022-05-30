@@ -182,6 +182,29 @@ bool checkCollisionMany(std::shared_ptr<planning_scene_monitor::PlanningSceneMon
 };
 
 
+// Create a state pointer and initialize it randomly
+moveit::core::RobotStatePtr randomState(const moveit::core::RobotModelConstPtr& kinematic_model)
+{
+    // Get joint parameters from model
+    const moveit::core::JointModelGroup* joint_model_group = kinematic_model->getJointModelGroup("panda_arm");
+
+    moveit::core::RobotStatePtr kinematic_state(new moveit::core::RobotState(kinematic_model));
+    kinematic_state->setToDefaultValues();  // without this, fingers are at like 10^243 and crash rviz
+    kinematic_state->setToRandomPositions(joint_model_group);
+
+    return kinematic_state;
+};
+
+
+// Get a geometry Pose from a state
+geometry_msgs::Pose getStatePose(moveit::core::RobotStatePtr kinematic_state)
+{
+        Eigen::Affine3d end_effector = kinematic_state->getGlobalLinkTransform("panda_link8");
+        geometry_msgs::Pose ee_pose = tf2::toMsg(end_effector);
+        return ee_pose;
+}
+
+
 // Generate interpolated states between two states
 std::vector<moveit::core::RobotStatePtr> interpolateStates(
                                                 const moveit::core::RobotModelConstPtr& kinematic_model,
@@ -306,6 +329,11 @@ moveit_msgs::DisplayRobotState displayMsgFromKin(moveit::core::RobotStatePtr kin
 }
 
 
+// Boilerplate random number generation stuff
+std::uniform_real_distribution<double> uniform(0, 1);
+std::default_random_engine rng(time(NULL));
+
+
 int main(int argc, char **argv)
 {
     ros::init(argc, argv, "devtests");
@@ -342,15 +370,21 @@ int main(int argc, char **argv)
     ros::Publisher graph_pub = n.advertise<visualization_msgs::Marker>("graph_lines", 1000);
     ros::Rate loop_rate(100);
     int count = 1;
+
+    auto goal_state = randomState(kinematic_model);
+
     while (ros::ok())
     {
-
         // Pick a random configuration
-        moveit::core::RobotStatePtr kinematic_state(new moveit::core::RobotState(kinematic_model));
-        kinematic_state->setToDefaultValues();  // without this, fingers are at like 10^243 and crash rviz
-        kinematic_state->setToRandomPositions(joint_model_group);
-        Eigen::Affine3d end_effector = kinematic_state->getGlobalLinkTransform("panda_link8");
-        geometry_msgs::Pose ee_pose = tf2::toMsg(end_effector);
+        auto kinematic_state = randomState(kinematic_model);
+
+        // With some probability, move towards goal instead
+        if (uniform(rng) < 0.05 && count > 1)
+        {
+            ROS_INFO("Attempting to extend to goal");
+            kinematic_state = goal_state;
+        }
+        auto ee_pose = getStatePose(kinematic_state);
 
         // Build a node from this configuration, package into a vertex
         Node* thisNodePtr = new Node(*kinematic_state, ee_pose);
@@ -387,12 +421,9 @@ int main(int argc, char **argv)
             {
                 ROS_INFO("Adding an edge!");
 
-                // Use extend to move towards new point
+                // Use extend to move in direction of new point
                 auto extended_state = extend(kinematic_model, otherNodePtr->getStatePtr(), thisNodePtr->getStatePtr());
-
-                // Generate a pose for the extended point
-                Eigen::Affine3d end_effector = extended_state->getGlobalLinkTransform("panda_link8");
-                geometry_msgs::Pose ee_pose = tf2::toMsg(end_effector);
+                auto ee_pose = getStatePose(extended_state);
 
                 // Update the candidate node
                 thisNodePtr = new Node(*extended_state, ee_pose);
