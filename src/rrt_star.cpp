@@ -177,7 +177,7 @@ class RRTstar
                 // If jumping from the new vertex to this neighbor is cheaper than jumping from the
                 // neighbor's parent to the neighbor, then the new vertex is now the parent.
                 // Congrats and good luck on raising that vertex to be a good upstanding citizen
-                if (Cost[Id(new_vertex)] + calculateCost(new_vertex, neighbor) < Cost[Id(new_vertex)])
+                if (Cost[Id(new_vertex)] + calculateCost(new_vertex, neighbor) < Cost[Id(neighbor)])
                 {
                     // Set new cost for the neighbor
                     Cost[Id(neighbor)] = Cost[Id(new_vertex)] + calculateCost(new_vertex, neighbor);
