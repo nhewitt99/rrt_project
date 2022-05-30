@@ -24,6 +24,7 @@
 #include <utility>
 #include <boost/graph/graph_traits.hpp>
 #include <boost/graph/adjacency_list.hpp>
+#include <boost/graph/dijkstra_shortest_paths.hpp>
 
 class Node
 {
@@ -81,7 +82,7 @@ double nodeDistance(Node n1, Node n2)
 
 
 // Set up types for graph
-struct Vertex {Node* ptr;};
+struct Vertex{Node* ptr;};
 typedef boost::adjacency_list<boost::vecS, boost::vecS, boost::undirectedS, Vertex, double> graph_t;
 typedef boost::graph_traits<graph_t>::vertex_descriptor vertex_t;
 typedef boost::graph_traits<graph_t>::edge_descriptor edge_t;
@@ -329,6 +330,37 @@ moveit_msgs::DisplayRobotState displayMsgFromKin(moveit::core::RobotStatePtr kin
 }
 
 
+//// Reverse a path for dijkstra
+//std::vector<vertex_t> getPath(const graph_t G, const std::vector<vertex_t>& pMap, const vertex_t& source, const vertex_t& destination)
+//{
+//    std::vector<vertex_t> path;
+//    vertex_t current = destination;
+//    while (current != source)
+//    {
+//        path.push_back(current);
+//        current = pMap[current];
+//    }
+//    path.push_back(source);
+//    return path;
+//}
+//
+//
+//// Dijkstra
+//std::vector<vertex_t> dijkstra(const graph_t& G, const vertex_t source, const vertex_t destination)
+//{
+//    const int numVertices = boost::num_vertices(G);
+//    std::vector<double> distances(numVertices);
+//    std::vector<vertex_t> pMap(numVertices);
+//
+//    auto distanceMap = boost::predecessor_map(
+//            boost::make_iterator_property_map(pMap.begin(), boost::get(boost::vertex_index, G))).distance_map(
+//            boost::make_iterator_property_map(distances.begin(), boost::get(boost::vertex_index, G)));
+//
+//    boost::dijkstra_shortest_paths(G, source, distanceMap);
+//    return getPath(G, pMap, source, destination);
+//}
+
+
 // Boilerplate random number generation stuff
 std::uniform_real_distribution<double> uniform(0, 1);
 std::default_random_engine rng(time(NULL));
@@ -373,6 +405,9 @@ int main(int argc, char **argv)
 
     auto goal_state = randomState(kinematic_model);
 
+    vertex_t start_vertex;
+    vertex_t end_vertex;
+
     while (ros::ok())
     {
         // Pick a random configuration
@@ -389,6 +424,7 @@ int main(int argc, char **argv)
         // Build a node from this configuration, package into a vertex
         Node* thisNodePtr = new Node(*kinematic_state, ee_pose);
         Vertex thisVertex = {thisNodePtr};
+        vertex_t thisVertexDesc;  // Define here to keep in scope but don't init yet
 
         // Find the closest existing vertex to this one
         graph_t::vertex_iterator vclosest;
@@ -404,6 +440,7 @@ int main(int argc, char **argv)
                 nodes.push_back(*thisNodePtr);
 
                 vertex_t thisVertexDesc = boost::add_vertex(thisVertex, G);
+                start_vertex = thisVertexDesc;
             }
             else
             {
@@ -432,7 +469,7 @@ int main(int argc, char **argv)
 
                 // Add edge
                 vertex_t otherVertexDesc = *vclosest;
-                vertex_t thisVertexDesc = boost::add_vertex(thisVertex, G);
+                thisVertexDesc = boost::add_vertex(thisVertex, G);
                 boost::add_edge(thisVertexDesc, otherVertexDesc, min, G);
 
                 // Visualize edge
@@ -450,9 +487,19 @@ int main(int argc, char **argv)
             state_pub.publish(displayMsgFromKin(kinematic_state));
             graph_pub.publish(line_list);
         }
+
+//        // After graph is large try to run dijkstra
+//        if (count > 100)
+//        {
+//            end_vertex = thisVertexDesc;
+//            auto path = dijkstra(G, start_vertex, end_vertex);
+//            ROS_INFO("%d", int(path.size()));
+//        }
+
         ros::spinOnce();
         loop_rate.sleep();
         count++;
     }
+
     return 0;
 }
