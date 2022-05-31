@@ -193,6 +193,10 @@ target_link_libraries(${PROJECT_NAME}_node
   ${catkin_LIBRARIES}
 )
 
+target_link_libraries(${PROJECT_NAME}_algorithm
+  ${catkin_LIBRARIES}
+)
+
 #############
 ## Install ##
 #############
