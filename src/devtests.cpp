@@ -142,6 +142,30 @@ void updateLineList(visualization_msgs::Marker* m, Node* node1ptr, Node* node2pt
 };
 
 
+// Build a line_list marker from a graph
+visualization_msgs::Marker linesFromGraph(graph_t G)
+{
+    // Init an empty list
+    auto ret = initLineList();
+
+    // Iterate over edges of graph
+    auto es = boost::edges(G);
+    for (auto edge_iter = es.first; edge_iter != es.second; ++edge_iter)
+    {
+        // Get two vertices of edge
+        vertex_t v1 = boost::source(*edge_iter, G);
+        vertex_t v2 = boost::target(*edge_iter, G);
+
+        // Get nodes from vertices and add line
+        Node* n1 = G[v1].ptr;
+        Node* n2 = G[v2].ptr;
+        updateLineList(&ret, n1, n2);
+    }
+
+    return ret;
+};
+
+
 // Check whether this one robotstate collides (with self or environment) in the planning scene
 bool checkCollisionOnce(std::shared_ptr<planning_scene_monitor::PlanningSceneMonitor> psm,
                         moveit::core::RobotStatePtr kinematic_state)
@@ -485,7 +509,8 @@ int main(int argc, char **argv)
         if (count % 10 == 0)
         {
             state_pub.publish(displayMsgFromKin(kinematic_state));
-            graph_pub.publish(line_list);
+//            graph_pub.publish(line_list);
+            graph_pub.publish(linesFromGraph(G));
         }
 
 //        // After graph is large try to run dijkstra
