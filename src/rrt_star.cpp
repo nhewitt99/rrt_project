@@ -319,6 +319,42 @@ visualization_msgs::Marker initLineList()
     return line_list;
 };
 
+
+// Add an edge between two nodes to an existing line_list marker
+void updateLineList(visualization_msgs::Marker* m, Node* node1ptr, Node* node2ptr)
+{
+    m->header.stamp = ros::Time::now();
+
+    geometry_msgs::Point point1 = node1ptr->getPose().position;
+    geometry_msgs::Point point2 = node2ptr->getPose().position;
+    m->points.push_back(point1);
+    m->points.push_back(point2);
+};
+
+
+// Build a line_list marker from a graph
+visualization_msgs::Marker linesFromGraph(graph_t G)
+{
+    // Init an empty list
+    auto ret = initLineList();
+
+    // Iterate over edges of graph
+    auto es = boost::edges(G);
+    for (auto edge_iter = es.first; edge_iter != es.second; ++edge_iter)
+    {
+        // Get two vertices of edge
+        vertex_t v1 = boost::source(*edge_iter, G);
+        vertex_t v2 = boost::target(*edge_iter, G);
+
+        // Get nodes from vertices and add line
+        Node* n1 = G[v1].ptr;
+        Node* n2 = G[v2].ptr;
+        updateLineList(&ret, n1, n2);
+    }
+
+    return ret;
+};
+
 // Create a state pointer and initialize it randomly
 moveit::core::RobotStatePtr randomState(const moveit::core::RobotModelConstPtr& kinematic_model)
 {
@@ -584,9 +620,10 @@ int main(int argc, char **argv)
             thisVertex = {thisNodePtr};
 
             // Add node to graph
-            rrt.step(thisVertex);
+            auto latest_graph = rrt.step(thisVertex);
 
-            // TODO: @Nathan Visualize the graph
+            // Throttle publishing
+            graph_pub.publish(linesFromGraph(latest_graph));
         }
         else
         {
