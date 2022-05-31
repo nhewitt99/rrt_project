@@ -102,20 +102,21 @@ typedef boost::graph_traits<graph_t>::edge_descriptor edge_t;
 class RRTstar
 {
     public:
-        RRTstar(double radius, vertex_t start_vertex)
+        RRTstar(double radius, Vertex start_vertex)
         {
             // Create graph with root node
+            addVertex(start_vertex);
 
             // Assign the start vertex a cost of 0
             Cost.push_back(0.0);
         }
-        graph_t step(Node new_node)
+        graph_t step(Vertex new_vertex)
         {
             // Input node is random, not in collision, and extended from an existing node
 
             // Add a new random position in joint space as a vertex to the graph
             // This new vertex is guaranteed to be within specified radius of an existing vertex
-            vertex_t new_node_desc = addNodeAsVertex(new_node);
+            vertex_t new_node_desc = addVertex(new_vertex);
 
             // Get all neighbors within the specified radius
             vector<vertex_t> neighbors = getNeighbors(new_node_desc);
@@ -149,8 +150,12 @@ class RRTstar
             double min_distance = -1.0;
             vertex_t v_closest;
             graph_t::vertex_iterator v, v_end;
+            int count = 0;
             for (boost::tie(v, v_end) = boost::vertices(G); v != v_end; ++v)
             {
+                cout << "count: " << count << endl;
+                count = count +1;
+
                 Vertex other_vertex = G[*v];
                 Node other_node = *(other_vertex.ptr);
 
@@ -178,11 +183,11 @@ class RRTstar
         double radius;
 
         // Add a new node as a vertex to the graph. Do not link it to any other vertices.
-        vertex_t addNodeAsVertex(Node new_node)
+        vertex_t addVertex(Vertex new_vertex)
         {
-            Node* node_ptr = &new_node;
-            Vertex vertex = {node_ptr};
-            return boost::add_vertex(vertex, G);
+            // Node* node_ptr = &new_node;
+            // Vertex vertex = {node_ptr};
+            return boost::add_vertex(new_vertex, G);
         }
 
         // TODO: Account for theta circular wrap-around
@@ -427,6 +432,10 @@ moveit::core::RobotStatePtr extend(const moveit::core::RobotModelConstPtr& kinem
     state1->copyJointGroupPositions(joint_model_group, current_values);
     state2->copyJointGroupPositions(joint_model_group, end_values);
 
+
+    std::cout << current_values[0] << std::endl;
+    std::cout << end_values[0] << std::endl;
+
     // Get difference
     std::vector<double> diff_values;
     double magnitude = 0;
@@ -498,9 +507,9 @@ int main(int argc, char **argv)
 
     auto goal_state = randomState(kinematic_model);
 
-    // TODO: Populate start and end vertices...
-    vertex_t start_vertex;
-    vertex_t end_vertex;
+    // TODO: @Nathan Populate start and end vertices...
+    Vertex start_vertex;
+    Vertex end_vertex;
 
     double radius = 0.5;
     RRTstar rrt = RRTstar(radius, start_vertex);
@@ -528,6 +537,7 @@ int main(int argc, char **argv)
         pair<vertex_t, double> closest_vertex_p = rrt.getClosestVertex(thisNodePtr);
         vertex_t closest_vertex = closest_vertex_p.first;
         double min = closest_vertex_p.second;
+        cout << min << endl;
 
         // Back out a node pointer from closest vertex
         Vertex otherVertex = rrt.getGraph()[*vclosest];
@@ -544,16 +554,12 @@ int main(int argc, char **argv)
 
             // Update the candidate node
             thisNodePtr = new Node(*extended_state, ee_pose, rrt.getNewNodeId(), kinematic_model);
-            nodes.push_back(*thisNodePtr);
             thisVertex = {thisNodePtr};
 
-            // // Add edge
-            // vertex_t otherVertexDesc = *vclosest;
-            // thisVertexDesc = boost::add_vertex(thisVertex, G);
-            // boost::add_edge(thisVertexDesc, otherVertexDesc, min, G);
+            // Add node to graph
+            rrt.step(thisVertex);
 
-            // // Visualize edge
-            // updateLineList(&line_list, thisNodePtr, otherNodePtr);
+            // TODO: @Nathan Visualize the graph
         }
         else
         {
