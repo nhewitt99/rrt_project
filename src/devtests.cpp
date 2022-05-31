@@ -87,7 +87,8 @@ double nodeDistance(Node n1, Node n2)
 
 // Set up types for graph
 struct Vertex{Node* ptr;};
-typedef boost::adjacency_list<boost::vecS, boost::vecS, boost::undirectedS, Vertex, double> graph_t;
+//struct EdgeProperties{double weight;};
+typedef boost::adjacency_list<boost::vecS, boost::vecS, boost::undirectedS, Vertex, boost::property<boost::edge_weight_t, double>> graph_t;
 typedef boost::graph_traits<graph_t>::vertex_descriptor vertex_t;
 typedef boost::graph_traits<graph_t>::edge_descriptor edge_t;
 
@@ -382,35 +383,36 @@ moveit_msgs::DisplayRobotState displayMsgFromKin(moveit::core::RobotStatePtr kin
 }
 
 
-//// Reverse a path for dijkstra
-//std::vector<vertex_t> getPath(const graph_t G, const std::vector<vertex_t>& pMap, const vertex_t& source, const vertex_t& destination)
-//{
-//    std::vector<vertex_t> path;
-//    vertex_t current = destination;
-//    while (current != source)
-//    {
-//        path.push_back(current);
-//        current = pMap[current];
-//    }
-//    path.push_back(source);
-//    return path;
-//}
-//
-//
-//// Dijkstra
-//std::vector<vertex_t> dijkstra(const graph_t& G, const vertex_t source, const vertex_t destination)
-//{
-//    const int numVertices = boost::num_vertices(G);
-//    std::vector<double> distances(numVertices);
-//    std::vector<vertex_t> pMap(numVertices);
-//
-//    auto distanceMap = boost::predecessor_map(
-//            boost::make_iterator_property_map(pMap.begin(), boost::get(boost::vertex_index, G))).distance_map(
-//            boost::make_iterator_property_map(distances.begin(), boost::get(boost::vertex_index, G)));
-//
-//    boost::dijkstra_shortest_paths(G, source, distanceMap);
-//    return getPath(G, pMap, source, destination);
-//}
+// Reverse a path for dijkstra
+std::vector<vertex_t> getPath(const graph_t G, const std::vector<vertex_t>& pMap, const vertex_t& source, const vertex_t& destination)
+{
+    std::vector<vertex_t> path;
+    vertex_t current = destination;
+    while (current != source)
+    {
+        path.push_back(current);
+        current = pMap[current];
+    }
+    path.push_back(source);
+    return path;
+}
+
+
+// Dijkstra
+std::vector<vertex_t> dijkstra(const graph_t& G, const vertex_t source, const vertex_t destination)
+{
+    const int numVertices = boost::num_vertices(G);
+    std::vector<double> distances(numVertices);
+    std::vector<vertex_t> pMap(numVertices);
+
+    auto distanceMap = boost::predecessor_map(
+            boost::make_iterator_property_map(pMap.begin(), boost::get(boost::vertex_index, G))).distance_map(
+            boost::make_iterator_property_map(distances.begin(), boost::get(boost::vertex_index, G)));
+//    auto distanceMap = boost::predecessor_map(&pMap[0]).distance_map(&distances[0]);
+
+    boost::dijkstra_shortest_paths(G, source, distanceMap);
+    return getPath(G, pMap, source, destination);
+}
 
 
 // Boilerplate random number generation stuff
@@ -457,6 +459,7 @@ int main(int argc, char **argv)
 
     ros::Publisher state_pub = n.advertise<moveit_msgs::DisplayRobotState>("display_robot_state_test", 1000);
     ros::Publisher graph_pub = n.advertise<visualization_msgs::Marker>("graph_lines", 1000);
+    ros::Publisher path_pub = n.advertise<visualization_msgs::Marker>("path_lines", 1000);
     ros::Rate loop_rate(100);
     int count = 1;
 
@@ -544,13 +547,25 @@ int main(int argc, char **argv)
             graph_pub.publish(linesFromGraph(G));
         }
 
-//        // After graph is large try to run dijkstra
-//        if (count > 100)
-//        {
-//            end_vertex = thisVertexDesc;
-//            auto path = dijkstra(G, start_vertex, end_vertex);
-//            ROS_INFO("%d", int(path.size()));
-//        }
+        // After graph is large try to run dijkstra
+        if (count > 1000)
+        {
+            end_vertex = thisVertexDesc;
+            auto path = dijkstra(G, start_vertex, end_vertex);
+            ROS_INFO("%d", int(path.size()));
+
+            auto path_list = initLineList();
+            path_list.color.r = 1.0;
+            path_list.color.b = 1.0;
+            path_list.color.g = 0.0;
+            path_list.scale.x = 0.03;
+            for (int i = 0; i < path.size() - 1; i++)
+            {
+                updateLineList(&path_list, G[path[i]].ptr, G[path[i+1]].ptr);
+            }
+            path_pub.publish(path_list);
+            break;
+        }
 
         ros::spinOnce();
         loop_rate.sleep();
