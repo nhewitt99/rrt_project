@@ -28,6 +28,9 @@
 
 using namespace std;
 
+const std::vector<double> START_JOINTS = {0.8007, 0.6576, 0.8774, -0.8879, -0.5002, 1.3726, 2.2410};
+const std::vector<double> GOAL_JOINTS = {-0.5265, 1.0870, 0.2671, -1.6648, 2.6357, 0.4429, -0.8478};
+
 // Boilerplate random number generation stuff
 std::uniform_real_distribution<double> uniform(0, 1);
 std::default_random_engine rng(time(NULL));
@@ -329,6 +332,21 @@ moveit::core::RobotStatePtr randomState(const moveit::core::RobotModelConstPtr& 
     return kinematic_state;
 };
 
+// Build a state from a vector of joints
+moveit::core::RobotStatePtr stateFromJoints(const moveit::core::RobotModelConstPtr& kinematic_model, std::vector<double> joints)
+{
+    // Get joint parameters from model
+    const moveit::core::JointModelGroup* joint_model_group = kinematic_model->getJointModelGroup("panda_arm");
+
+    moveit::core::RobotStatePtr kinematic_state(new moveit::core::RobotState(kinematic_model));
+    kinematic_state->setToDefaultValues();  // without this, fingers are at like 10^243 and crash rviz
+
+    kinematic_state->setJointGroupPositions(joint_model_group, joints);
+    kinematic_state->enforceBounds();  // just in case
+
+    return kinematic_state;
+};
+
 // Get a geometry Pose from a state
 geometry_msgs::Pose getStatePose(moveit::core::RobotStatePtr kinematic_state)
 {
@@ -505,19 +523,17 @@ int main(int argc, char **argv)
     ros::Rate loop_rate(100);
     int count = 1;
 
-    // TODO: @Nathan Populate start and end vertices...
-    // Right now they are populated arbitrarily so that the code doesn't segfault.
     Vertex start_vertex;
     Vertex end_vertex;
 
-    // Generate random start vertex
-    moveit::core::RobotStatePtr start_state = randomState(kinematic_model);
+    // Generate start vertex
+    auto start_state = stateFromJoints(kinematic_model, START_JOINTS);
     geometry_msgs::Pose start_ee_pose = getStatePose(start_state);
     Node* start_node_ptr = new Node(*start_state, start_ee_pose, 0, kinematic_model);
     start_vertex = {start_node_ptr};
 
-    // Generate random end vertex
-    moveit::core::RobotStatePtr end_state = randomState(kinematic_model);
+    // Generate end vertex
+    auto end_state = stateFromJoints(kinematic_model, GOAL_JOINTS);
     geometry_msgs::Pose end_ee_pose = getStatePose(end_state);
     Node* end_node_ptr = new Node(*end_state, end_ee_pose, 0, kinematic_model);
     end_vertex = {end_node_ptr};
