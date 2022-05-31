@@ -26,6 +26,10 @@
 #include <boost/graph/adjacency_list.hpp>
 #include <boost/graph/dijkstra_shortest_paths.hpp>
 
+
+const std::vector<double> START_JOINTS = {0.8007, 0.6576, 0.8774, -0.8879, -0.5002, 1.3726, 2.2410};
+const std::vector<double> GOAL_JOINTS = {-0.5265, 1.0870, 0.2671, -1.6648, 2.6357, 0.4429, -0.8478};
+
 class Node
 {
     public:
@@ -221,13 +225,37 @@ moveit::core::RobotStatePtr randomState(const moveit::core::RobotModelConstPtr& 
 };
 
 
+// Get the current state pointer from the planning scene
+moveit::core::RobotStatePtr currentState(std::shared_ptr<planning_scene_monitor::PlanningSceneMonitor> psm)
+{
+    moveit::core::RobotStatePtr kinematic_state(new moveit::core::RobotState(planning_scene_monitor::LockedPlanningSceneRO(psm)->getCurrentState()));
+    return kinematic_state;
+};
+
+
+// Build a state from a vector of joints
+moveit::core::RobotStatePtr stateFromJoints(const moveit::core::RobotModelConstPtr& kinematic_model, std::vector<double> joints)
+{
+    // Get joint parameters from model
+    const moveit::core::JointModelGroup* joint_model_group = kinematic_model->getJointModelGroup("panda_arm");
+
+    moveit::core::RobotStatePtr kinematic_state(new moveit::core::RobotState(kinematic_model));
+    kinematic_state->setToDefaultValues();  // without this, fingers are at like 10^243 and crash rviz
+
+    kinematic_state->setJointGroupPositions(joint_model_group, joints);
+    kinematic_state->enforceBounds();  // just in case
+
+    return kinematic_state;
+};
+
+
 // Get a geometry Pose from a state
 geometry_msgs::Pose getStatePose(moveit::core::RobotStatePtr kinematic_state)
 {
         Eigen::Affine3d end_effector = kinematic_state->getGlobalLinkTransform("panda_link8");
         geometry_msgs::Pose ee_pose = tf2::toMsg(end_effector);
         return ee_pose;
-}
+};
 
 
 // Generate interpolated states between two states
@@ -402,6 +430,7 @@ int main(int argc, char **argv)
     auto psm = std::make_shared<planning_scene_monitor::PlanningSceneMonitor>("robot_description");
     psm->startSceneMonitor("/move_group/monitored_planning_scene");
     psm->requestPlanningSceneState("/get_planning_scene");
+    psm->startStateMonitor();
 
     // Construct a RobotModel by looking up the description on the parameter server
 //    robot_model_loader::RobotModelLoader robot_model_loader("robot_description");
@@ -412,6 +441,10 @@ int main(int argc, char **argv)
     // Get joint information from model
     const moveit::core::JointModelGroup* joint_model_group = kinematic_model->getJointModelGroup("panda_arm");
     const std::vector<std::string>& joint_names = joint_model_group->getVariableNames();
+
+    // Build start and goal states
+    auto start_state = stateFromJoints(kinematic_model, START_JOINTS);
+    auto goal_state = stateFromJoints(kinematic_model, GOAL_JOINTS);
 
     // Store nodes
     std::vector<Node> nodes;
@@ -426,8 +459,6 @@ int main(int argc, char **argv)
     ros::Publisher graph_pub = n.advertise<visualization_msgs::Marker>("graph_lines", 1000);
     ros::Rate loop_rate(100);
     int count = 1;
-
-    auto goal_state = randomState(kinematic_model);
 
     vertex_t start_vertex;
     vertex_t end_vertex;
