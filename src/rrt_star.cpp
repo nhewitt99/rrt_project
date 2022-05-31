@@ -505,11 +505,22 @@ int main(int argc, char **argv)
     ros::Rate loop_rate(100);
     int count = 1;
 
-    auto goal_state = randomState(kinematic_model);
-
     // TODO: @Nathan Populate start and end vertices...
+    // Right now they are populated arbitrarily so that the code doesn't segfault.
     Vertex start_vertex;
     Vertex end_vertex;
+
+    // Generate random start vertex
+    moveit::core::RobotStatePtr start_state = randomState(kinematic_model);
+    geometry_msgs::Pose start_ee_pose = getStatePose(start_state);
+    Node* start_node_ptr = new Node(*start_state, start_ee_pose, 0, kinematic_model);
+    start_vertex = {start_node_ptr};
+
+    // Generate random end vertex
+    moveit::core::RobotStatePtr end_state = randomState(kinematic_model);
+    geometry_msgs::Pose end_ee_pose = getStatePose(end_state);
+    Node* end_node_ptr = new Node(*end_state, end_ee_pose, 0, kinematic_model);
+    end_vertex = {end_node_ptr};
 
     double radius = 0.5;
     RRTstar rrt = RRTstar(radius, start_vertex);
@@ -523,7 +534,7 @@ int main(int argc, char **argv)
         if (uniform(rng) < 0.05 && count > 1)
         {
             ROS_INFO("Attempting to extend to goal");
-            kinematic_state = goal_state;
+            kinematic_state = end_state;
         }
         auto ee_pose = getStatePose(kinematic_state);
 
