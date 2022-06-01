@@ -188,6 +188,7 @@ class RRTstar
         // Add a new node as a vertex to the graph. Do not link it to any other vertices.
         vertex_t addVertex(Vertex new_vertex)
         {
+            cout << "addVertex()" << endl;
             // Node* node_ptr = &new_node;
             // Vertex vertex = {node_ptr};
             return boost::add_vertex(new_vertex, G);
@@ -212,6 +213,7 @@ class RRTstar
         // Get all the vertices within
         vector<vertex_t> getNeighbors(vertex_t new_node_desc)
         {
+            cout << "getNeighbors()" << endl;
             // Unpack new node
             Vertex new_node_vertex = G[new_node_desc];
             Joints new_node_joints = new_node_vertex.ptr->getJoints();
@@ -246,13 +248,28 @@ class RRTstar
 
         vertex_t getNearestNeighbor(vertex_t new_node, vector<vertex_t> neighbors)
         {
+            cout << "getNearestNeighbor()" << endl;
+
+            // If there are 0 neighbors, then the new node is the root node.
+            // It's nearest neighbor is itself
+            if (neighbors.size() == 0)
+            {
+                return new_node;
+            }
+
             // Initialze variables for storing nearest neighbor info
             double min_distance = -1.0;
+            cout << "Set min_distance" << endl;
             vertex_t nearest_neighbor;
+            cout << "Set nearest neighbor" << endl;
+
+            cout << "neighbors.size(): " << neighbors.size() << endl;
 
             // Iterate through all neighbors
+            int n_count = 0;
             for (vertex_t neighbor : neighbors)
             {
+                cout << "n_count: " << n_count << endl;
                 // Calculate distance to neighbor
                 double distance = calculateJointDistance(G[new_node].ptr->getJoints(), G[neighbor].ptr->getJoints());
 
@@ -260,6 +277,7 @@ class RRTstar
                 // OR if this neighbor is closer than the current nearest neighbor
                 if (min_distance < 0 || distance < min_distance)
                 {
+                    cout << "Set nearest_neighbor" << endl;
                     // Save distance
                     min_distance = distance;
                     // Set as new nearest neighbor
@@ -281,21 +299,23 @@ class RRTstar
 
         void rewireNeighbors(vertex_t new_vertex, vector<vertex_t> neighbors)
         {
+            cout << "rewireNeighbors()" << endl;
             for (vertex_t neighbor: neighbors)
             {
                 // If jumping from the new vertex to this neighbor is cheaper than jumping from the
                 // neighbor's parent to the neighbor, then the new vertex is now the parent.
                 // Congrats and good luck on raising that vertex to be a good upstanding citizen
+                cout << "Cost.size(): " << Cost.size() << "Id(new_vertex): " << Id(new_vertex) << "Id(neighbor)" << Id(neighbor) << endl;
                 if (Cost[Id(new_vertex)] + calculateCost(new_vertex, neighbor) < Cost[Id(neighbor)])
                 {
-                    // Set new cost for the neighbor
-                    Cost[Id(neighbor)] = Cost[Id(new_vertex)] + calculateCost(new_vertex, neighbor);
+                    // // Set new cost for the neighbor
+                    // Cost[Id(neighbor)] = Cost[Id(new_vertex)] + calculateCost(new_vertex, neighbor);
 
-                    // Delink the neighbor from its original parent
-                    deLinkVertices(neighbor, Parents[Id(neighbor)]);
+                    // // Delink the neighbor from its original parent
+                    // deLinkVertices(neighbor, Parents[Id(neighbor)]);
 
-                    // Link the neighbor as a "new" vertex to the actually new vertex
-                    linkNewVertex(neighbor, new_vertex);
+                    // // Link the neighbor as a "new" vertex to the actually new vertex
+                    // linkNewVertex(neighbor, new_vertex);
                 }
             }
         }
@@ -577,6 +597,7 @@ int main(int argc, char **argv)
     double radius = 0.5;
     RRTstar rrt = RRTstar(radius, start_vertex);
 
+    int add_count = 0;
     while (ros::ok())
     {
         // Pick a random configuration
@@ -610,6 +631,8 @@ int main(int argc, char **argv)
         if (edgeValid(psm, kinematic_model, thisNodePtr, otherNodePtr))
         {
             ROS_INFO("Adding an edge!");
+            cout << "add_count: " << add_count << endl;
+            add_count = add_count + 1;
 
             // Use extend to move in direction of new point
             auto extended_state = extend(kinematic_model, otherNodePtr->getStatePtr(), thisNodePtr->getStatePtr());
