@@ -142,10 +142,24 @@ class RRTstar
             Cost.push_back(calculateCost(new_node_desc, nearest_neighbor));
 
             // Rewire neighbors so that the new node is now their parent node if this would result in a lower cost for that node
-            rewireNeighbors(new_node_desc, neighbors);
+            // rewireNeighbors(new_node_desc, neighbors);
 
             // Link together new vertex with its nearest neighbor
             linkNewVertex(new_node_desc, nearest_neighbor);
+
+            int num_edges = 0;
+            graph_t::edge_iterator e, e_end;
+            for (boost::tie(e,e_end) = boost::edges(G); e != e_end; ++e)
+            {
+                num_edges = num_edges + 1;
+            }
+            int num_vertices = 0;
+            graph_t::vertex_iterator v, v_end;
+            for (boost::tie(v, v_end) = boost::vertices(G); v != v_end; ++v)
+            {
+                num_vertices = num_vertices + 1;
+            }
+            cout << "num_edges: " << num_edges << " | num_vertices: " << num_vertices << endl;
 
             return G;
         }
@@ -159,19 +173,37 @@ class RRTstar
         }
         pair<vertex_t, double> getClosestVertex(Node* new_node_ptr)
         {
+            cout << "getClosestVertex" << endl;
             double min_distance = -1.0;
             vertex_t v_closest;
             graph_t::vertex_iterator v, v_end;
             int count = 0;
             for (boost::tie(v, v_end) = boost::vertices(G); v != v_end; ++v)
             {
-                // cout << "count: " << count << endl;
+                cout << "count: " << count << endl;
                 count = count +1;
 
                 Vertex other_vertex = G[*v];
                 Node other_node = *(other_vertex.ptr);
 
                 double distance = calculateJointDistance(new_node_ptr->getJoints(), other_node.getJoints());
+
+                cout << "num joints: " << new_node_ptr->getJoints().size() << " | " << other_node.getJoints().size() << endl;
+
+                bool same_joints = true;
+                for (int i = 0; i<new_node_ptr->getJoints().size(); i++)
+                {
+                    cout << new_node_ptr->getJoints()[i] << " | " << other_node.getJoints()[i] << endl;
+                    if (new_node_ptr->getJoints()[i] != other_node.getJoints()[i])
+                    {
+                        same_joints = false;
+                    }
+                }
+
+                if (same_joints)
+                {
+                    cout << "New node has same joints as existing node" << endl;
+                }
 
                 // cout << "count: " << count << endl;
                 // for (double j : other_node.getJoints())
@@ -210,13 +242,64 @@ class RRTstar
             return boost::add_vertex(new_vertex, G);
         }
 
+        double calculateDeltaTheta(double a, double b)
+        {
+            if (a==b)
+            {
+                return 0;
+            }
+            else
+            {
+                double dp;
+                if (a > b)
+                {
+                    dp = a - 2*3.14159;
+                }
+                else
+                {
+                    dp = a + 2*3.14159;
+                }
+                double d0 = a - b;
+                double d1 = dp - b;
+                if (abs(d0) <= abs(d1))
+                {
+                    return d0;
+                }
+                else
+                {
+                    return d1;
+                }
+            }
+        }
+
         // TODO: Account for theta circular wrap-around
         double calculateJointDistance(Joints A, Joints B)
         {
             double squared_sum = 0;
             for (int i=0; i < A.size(); i++)
             {
-                squared_sum = squared_sum + pow((A[i] - B[i]), 2);
+
+                // # Case 0: Desired heading is current heading
+                // if desired_heading == current_heading:
+                //     delta_heading = 0
+                // else:
+                //     # Case 1: Desired heading greater than current heading
+                //     if desired_heading > current_heading:
+                //         desired_heading_prime = desired_heading - 2*np.pi
+
+                //     # Case 2: Desired heading less than current heading
+                //     else:
+                //         desired_heading_prime = desired_heading + 2*np.pi
+
+                //     delta0 = desired_heading - current_heading
+                //     delta1 = desired_heading_prime - current_heading
+                //     which_delta = np.argmin([np.abs(delta0), np.abs(delta1)])
+                //     delta_heading = np.array([delta0, delta1])[which_delta]
+
+                // double delta_theta = (A[i] - B[i]);
+                double delta_theta = calculateDeltaTheta(A[i], B[i]);
+
+                squared_sum = squared_sum + pow(delta_theta, 2);
             }
             return sqrt(squared_sum);
         }
@@ -266,6 +349,13 @@ class RRTstar
                     }
                 }
             }
+
+            cout << "Joints: " << endl;
+            for (double& j: G[new_node_desc].ptr->getJoints())
+            {
+                cout << j << endl;
+            }
+
             // cout << "neighbors.size()" << neighbors.size() << endl;
             return neighbors;
         }
@@ -278,6 +368,11 @@ class RRTstar
             // It's nearest neighbor is itself
             if (neighbors.size() == 0)
             {
+                cout << "Joints: " << endl;
+                for (double& j: G[new_node].ptr->getJoints())
+                {
+                    cout << j << endl;
+                }
                 // cout << "return new_node" << endl;
                 return new_node;
             }
@@ -309,12 +404,28 @@ class RRTstar
                     nearest_neighbor = neighbor;
                 }
             }
+            cout << "Joints: " << endl;
+            for (double& j: G[new_node].ptr->getJoints())
+            {
+                cout << j << endl;
+            }
             return nearest_neighbor;
         }
 
         void linkNewVertex(vertex_t new_vertex, vertex_t existing_vertex)
         {
             cout << "linkNewVertex" << endl;
+            if (G[new_vertex].ptr->getJoints()[0] == G[existing_vertex].ptr->getJoints()[0])
+            {
+                cout << "New vertex and existing vertex match. Purposefully causing segfault." << endl;
+                cout << "Joints: " << endl;
+                for (double& j: G[new_vertex].ptr->getJoints())
+                {
+                    cout << j << endl;
+                }
+                Joints j;
+                double i = j[0];
+            }
 
             // Assign parent to new vertex
             Parents[Id(new_vertex)] = existing_vertex;
@@ -376,7 +487,7 @@ visualization_msgs::Marker initLineList()
 // Add an edge between two nodes to an existing line_list marker
 void updateLineList(visualization_msgs::Marker* m, Node* node1ptr, Node* node2ptr)
 {
-    // cout << "updateLineList()" << endl;
+    cout << "updateLineList()" << endl;
     m->header.stamp = ros::Time::now();
 
     geometry_msgs::Point point1 = node1ptr->getPose().position;
@@ -384,8 +495,8 @@ void updateLineList(visualization_msgs::Marker* m, Node* node1ptr, Node* node2pt
     m->points.push_back(point1);
     m->points.push_back(point2);
 
-    // cout << point1 << endl;
-    // cout << point2 << endl;
+    cout << point1 << endl;
+    cout << point2 << endl;
 };
 
 
@@ -396,7 +507,9 @@ visualization_msgs::Marker linesFromGraph(graph_t G)
     // Init an empty list
     auto ret = initLineList();
 
-    // Iterate over edges of graph
+    // Iterate over edges of graph (only the first N edges)
+    int N = 5;
+    int n = 0;
     auto es = boost::edges(G);
     for (auto edge_iter = es.first; edge_iter != es.second; ++edge_iter)
     {
@@ -407,7 +520,11 @@ visualization_msgs::Marker linesFromGraph(graph_t G)
         // Get nodes from vertices and add line
         Node* n1 = G[v1].ptr;
         Node* n2 = G[v2].ptr;
-        updateLineList(&ret, n1, n2);
+        if (n < N)
+        {
+            updateLineList(&ret, n1, n2);
+            n++;
+        }
     }
 
     return ret;
@@ -533,7 +650,7 @@ bool edgeValid(std::shared_ptr<planning_scene_monitor::PlanningSceneMonitor> psm
 // Generate a state that extends towards another in c-space, less than some length in rads
 moveit::core::RobotStatePtr extend(const moveit::core::RobotModelConstPtr& kinematic_model,
                                    moveit::core::RobotStatePtr state1,
-                                   moveit::core::RobotStatePtr state2, double max=0.5)
+                                   moveit::core::RobotStatePtr state2, double max=0.49)
 {
     // Get joint parameters from model
     const moveit::core::JointModelGroup* joint_model_group = kinematic_model->getJointModelGroup("panda_arm");
@@ -621,8 +738,7 @@ int main(int argc, char **argv)
     Vertex end_vertex;
 
     // Generate start vertex
-    // auto start_state = stateFromJoints(kinematic_model, START_JOINTS);
-    auto start_state = randomState(kinematic_model);
+    auto start_state = stateFromJoints(kinematic_model, START_JOINTS);
     geometry_msgs::Pose start_ee_pose = getStatePose(start_state);
     Node* start_node_ptr = new Node(*start_state, start_ee_pose, 0, kinematic_model);
     start_vertex = {start_node_ptr};
@@ -637,7 +753,10 @@ int main(int argc, char **argv)
     RRTstar rrt = RRTstar(radius, start_vertex);
 
     int add_count = 0;
+    int ic = 0;
+    bool p = false;
     while (ros::ok())
+    // for (int i = 0; i < 100; i++)
     {
         // Pick a random configuration
         auto kinematic_state = randomState(kinematic_model);
@@ -685,6 +804,7 @@ int main(int argc, char **argv)
 
             // Throttle publishing
             graph_pub.publish(linesFromGraph(latest_graph));
+            ic++;
         }
         else
         {
