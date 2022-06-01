@@ -105,13 +105,19 @@ typedef boost::graph_traits<graph_t>::edge_descriptor edge_t;
 class RRTstar
 {
     public:
-        RRTstar(double radius, Vertex start_vertex)
+        RRTstar(double r, Vertex start_vertex)
         {
             // Create graph with root node
-            addVertex(start_vertex);
+            vertex_t start_vertex_desc = addVertex(start_vertex);
 
             // Assign the start vertex a cost of 0
             Cost.push_back(0.0);
+
+            // First vertex is its own parent
+            Parents.push_back(start_vertex_desc);
+
+            // Set radius
+            radius = r;
         }
         graph_t step(Vertex new_vertex)
         {
@@ -120,6 +126,9 @@ class RRTstar
             // Add a new random position in joint space as a vertex to the graph
             // This new vertex is guaranteed to be within specified radius of an existing vertex
             vertex_t new_node_desc = addVertex(new_vertex);
+
+            // Temporarily make new node its own parent
+            Parents.push_back(new_node_desc);
 
             // Get all neighbors within the specified radius
             vector<vertex_t> neighbors = getNeighbors(new_node_desc);
@@ -156,7 +165,7 @@ class RRTstar
             int count = 0;
             for (boost::tie(v, v_end) = boost::vertices(G); v != v_end; ++v)
             {
-                cout << "count: " << count << endl;
+                // cout << "count: " << count << endl;
                 count = count +1;
 
                 Vertex other_vertex = G[*v];
@@ -170,6 +179,7 @@ class RRTstar
                     v_closest = *v;
                 }
             }
+            // cout << "v_closest id: " << G[v_closest].ptr->getId() << endl;
             return make_pair(v_closest, min_distance);
         }
     private:
@@ -223,8 +233,12 @@ class RRTstar
 
             // Iterate through every vertex in the graph
             graph_t::vertex_iterator v, v_end;
+            int n_count = 0;
             for (boost::tie(v, v_end) = boost::vertices(G); v != v_end; ++v)
             {
+                cout << "id: " << G[*v].ptr->getId() << endl;
+                cout << "n_count: " << n_count << endl;
+                n_count = n_count + 1;
                 // Make sure current vertex i is not the new vertex
                 if (G[*v].ptr->getId() != new_node_vertex.ptr->getId())
                 {
@@ -235,14 +249,18 @@ class RRTstar
                     // Calculate the distance between these two nodes in joint space
                     double distance = calculateJointDistance(new_node_joints, i_joints);
 
+                    cout << "distance " << distance << "radius " << radius << endl;
+
                     // Vertex is a neighbor if within radius
-                    if (distance < radius)
+                    if (distance <= radius)
                     {
+                        cout << "distance<=radius" <<endl;
                         // Add vertex to vector of neighbors
                         neighbors.push_back(*v);
                     }
                 }
             }
+            cout << "neighbors.size()" << neighbors.size() << endl;
             return neighbors;
         }
 
@@ -254,6 +272,7 @@ class RRTstar
             // It's nearest neighbor is itself
             if (neighbors.size() == 0)
             {
+                cout << "return new_node" << endl;
                 return new_node;
             }
 
@@ -267,7 +286,7 @@ class RRTstar
 
             // Iterate through all neighbors
             int n_count = 0;
-            for (vertex_t neighbor : neighbors)
+            for (vertex_t& neighbor : neighbors)
             {
                 cout << "n_count: " << n_count << endl;
                 // Calculate distance to neighbor
@@ -289,33 +308,41 @@ class RRTstar
 
         void linkNewVertex(vertex_t new_vertex, vertex_t existing_vertex)
         {
+            cout << "linkNewVertex" << endl;
+
+            // Assign parent to new vertex
+            Parents[Id(new_vertex)] = existing_vertex;
             boost::add_edge(new_vertex, existing_vertex, Cost[G[new_vertex].ptr->getId()], G);
         }
 
         void deLinkVertices(vertex_t A, vertex_t B)
         {
+            cout << "deLinkVertices" << endl;
             boost::remove_edge(A, B, G);
         }
 
         void rewireNeighbors(vertex_t new_vertex, vector<vertex_t> neighbors)
         {
             cout << "rewireNeighbors()" << endl;
-            for (vertex_t neighbor: neighbors)
+            for (vertex_t& neighbor: neighbors)
             {
                 // If jumping from the new vertex to this neighbor is cheaper than jumping from the
                 // neighbor's parent to the neighbor, then the new vertex is now the parent.
                 // Congrats and good luck on raising that vertex to be a good upstanding citizen
-                cout << "Cost.size(): " << Cost.size() << "Id(new_vertex): " << Id(new_vertex) << "Id(neighbor)" << Id(neighbor) << endl;
+                cout << "Cost.size(): " << Cost.size() << " | Id(new_vertex): " << Id(new_vertex) << " | Id(neighbor): " << Id(neighbor) << endl;
                 if (Cost[Id(new_vertex)] + calculateCost(new_vertex, neighbor) < Cost[Id(neighbor)])
                 {
-                    // // Set new cost for the neighbor
-                    // Cost[Id(neighbor)] = Cost[Id(new_vertex)] + calculateCost(new_vertex, neighbor);
+                    cout << "if true" << endl;
+                    // Set new cost for the neighbor
+                    Cost[Id(neighbor)] = Cost[Id(new_vertex)] + calculateCost(new_vertex, neighbor);
+                    cout << "set cost" << endl;
 
-                    // // Delink the neighbor from its original parent
-                    // deLinkVertices(neighbor, Parents[Id(neighbor)]);
+                    cout << "Parents.size() " << Parents.size() << endl;
+                    // Delink the neighbor from its original parent
+                    deLinkVertices(neighbor, Parents[Id(neighbor)]);
 
-                    // // Link the neighbor as a "new" vertex to the actually new vertex
-                    // linkNewVertex(neighbor, new_vertex);
+                    // Link the neighbor as a "new" vertex to the actually new vertex
+                    linkNewVertex(neighbor, new_vertex);
                 }
             }
         }
@@ -343,18 +370,23 @@ visualization_msgs::Marker initLineList()
 // Add an edge between two nodes to an existing line_list marker
 void updateLineList(visualization_msgs::Marker* m, Node* node1ptr, Node* node2ptr)
 {
+    // cout << "updateLineList()" << endl;
     m->header.stamp = ros::Time::now();
 
     geometry_msgs::Point point1 = node1ptr->getPose().position;
     geometry_msgs::Point point2 = node2ptr->getPose().position;
     m->points.push_back(point1);
     m->points.push_back(point2);
+
+    // cout << point1 << endl;
+    // cout << point2 << endl;
 };
 
 
 // Build a line_list marker from a graph
 visualization_msgs::Marker linesFromGraph(graph_t G)
 {
+    cout << "linesFromGraph()" << endl;
     // Init an empty list
     auto ret = initLineList();
 
@@ -488,7 +520,7 @@ bool edgeValid(std::shared_ptr<planning_scene_monitor::PlanningSceneMonitor> psm
 {
     auto state1 = node1->getStatePtr();
     auto state2 = node2->getStatePtr();
-    auto inter_vec = interpolateStates(kinematic_model, state1, state2);
+    auto inter_vec = interpolateStates(kinematic_model, state1, state2, 1);
     return !checkCollisionMany(psm, inter_vec);
 };
 
@@ -603,12 +635,12 @@ int main(int argc, char **argv)
         // Pick a random configuration
         auto kinematic_state = randomState(kinematic_model);
 
-        // With some probability, move towards goal instead
-        if (uniform(rng) < 0.05 && count > 1)
-        {
+        // // With some probability, move towards goal instead
+        // if (uniform(rng) < 0.05 && count > 1)
+        // {
             ROS_INFO("Attempting to extend to goal");
             kinematic_state = end_state;
-        }
+        // }
         auto ee_pose = getStatePose(kinematic_state);
 
         // Build a node from this configuration, package into a vertex
@@ -643,7 +675,9 @@ int main(int argc, char **argv)
             thisVertex = {thisNodePtr};
 
             // Add node to graph
-            auto latest_graph = rrt.step(thisVertex);
+            graph_t latest_graph = rrt.step(thisVertex);
+
+
 
             // Throttle publishing
             graph_pub.publish(linesFromGraph(latest_graph));
