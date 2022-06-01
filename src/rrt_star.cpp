@@ -173,13 +173,19 @@ class RRTstar
 
                 double distance = calculateJointDistance(new_node_ptr->getJoints(), other_node.getJoints());
 
+                // cout << "count: " << count << endl;
+                // for (double j : other_node.getJoints())
+                // {
+                //     cout << "j: " << j << endl;
+                // }
+
                 if (min_distance < 0 || distance < min_distance)
                 {
                     min_distance = distance;
                     v_closest = *v;
                 }
             }
-            // cout << "v_closest id: " << G[v_closest].ptr->getId() << endl;
+            cout << "v_closest id: " << G[v_closest].ptr->getId() << endl;
             return make_pair(v_closest, min_distance);
         }
     private:
@@ -236,8 +242,8 @@ class RRTstar
             int n_count = 0;
             for (boost::tie(v, v_end) = boost::vertices(G); v != v_end; ++v)
             {
-                cout << "id: " << G[*v].ptr->getId() << endl;
-                cout << "n_count: " << n_count << endl;
+                // cout << "id: " << G[*v].ptr->getId() << endl;
+                // cout << "n_count: " << n_count << endl;
                 n_count = n_count + 1;
                 // Make sure current vertex i is not the new vertex
                 if (G[*v].ptr->getId() != new_node_vertex.ptr->getId())
@@ -249,18 +255,18 @@ class RRTstar
                     // Calculate the distance between these two nodes in joint space
                     double distance = calculateJointDistance(new_node_joints, i_joints);
 
-                    cout << "distance " << distance << "radius " << radius << endl;
+                    // cout << "distance " << distance << "radius " << radius << endl;
 
                     // Vertex is a neighbor if within radius
                     if (distance <= radius)
                     {
-                        cout << "distance<=radius" <<endl;
+                        // cout << "distance<=radius" <<endl;
                         // Add vertex to vector of neighbors
                         neighbors.push_back(*v);
                     }
                 }
             }
-            cout << "neighbors.size()" << neighbors.size() << endl;
+            // cout << "neighbors.size()" << neighbors.size() << endl;
             return neighbors;
         }
 
@@ -272,23 +278,23 @@ class RRTstar
             // It's nearest neighbor is itself
             if (neighbors.size() == 0)
             {
-                cout << "return new_node" << endl;
+                // cout << "return new_node" << endl;
                 return new_node;
             }
 
             // Initialze variables for storing nearest neighbor info
             double min_distance = -1.0;
-            cout << "Set min_distance" << endl;
+            // cout << "Set min_distance" << endl;
             vertex_t nearest_neighbor;
-            cout << "Set nearest neighbor" << endl;
+            // cout << "Set nearest neighbor" << endl;
 
-            cout << "neighbors.size(): " << neighbors.size() << endl;
+            // cout << "neighbors.size(): " << neighbors.size() << endl;
 
             // Iterate through all neighbors
             int n_count = 0;
             for (vertex_t& neighbor : neighbors)
             {
-                cout << "n_count: " << n_count << endl;
+                // cout << "n_count: " << n_count << endl;
                 // Calculate distance to neighbor
                 double distance = calculateJointDistance(G[new_node].ptr->getJoints(), G[neighbor].ptr->getJoints());
 
@@ -296,7 +302,7 @@ class RRTstar
                 // OR if this neighbor is closer than the current nearest neighbor
                 if (min_distance < 0 || distance < min_distance)
                 {
-                    cout << "Set nearest_neighbor" << endl;
+                    // cout << "Set nearest_neighbor" << endl;
                     // Save distance
                     min_distance = distance;
                     // Set as new nearest neighbor
@@ -329,15 +335,15 @@ class RRTstar
                 // If jumping from the new vertex to this neighbor is cheaper than jumping from the
                 // neighbor's parent to the neighbor, then the new vertex is now the parent.
                 // Congrats and good luck on raising that vertex to be a good upstanding citizen
-                cout << "Cost.size(): " << Cost.size() << " | Id(new_vertex): " << Id(new_vertex) << " | Id(neighbor): " << Id(neighbor) << endl;
+                // cout << "Cost.size(): " << Cost.size() << " | Id(new_vertex): " << Id(new_vertex) << " | Id(neighbor): " << Id(neighbor) << endl;
                 if (Cost[Id(new_vertex)] + calculateCost(new_vertex, neighbor) < Cost[Id(neighbor)])
                 {
                     cout << "if true" << endl;
                     // Set new cost for the neighbor
                     Cost[Id(neighbor)] = Cost[Id(new_vertex)] + calculateCost(new_vertex, neighbor);
-                    cout << "set cost" << endl;
+                    // cout << "set cost" << endl;
 
-                    cout << "Parents.size() " << Parents.size() << endl;
+                    // cout << "Parents.size() " << Parents.size() << endl;
                     // Delink the neighbor from its original parent
                     deLinkVertices(neighbor, Parents[Id(neighbor)]);
 
@@ -638,8 +644,8 @@ int main(int argc, char **argv)
         // // With some probability, move towards goal instead
         // if (uniform(rng) < 0.05 && count > 1)
         // {
-            ROS_INFO("Attempting to extend to goal");
-            kinematic_state = end_state;
+            // ROS_INFO("Attempting to extend to goal");
+            // kinematic_state = stateFromJoints(kinematic_model, GOAL_JOINTS);
         // }
         auto ee_pose = getStatePose(kinematic_state);
 
@@ -649,14 +655,13 @@ int main(int argc, char **argv)
         vertex_t thisVertexDesc;  // Define here to keep in scope but don't init yet
 
         // Find the closest existing vertex to this one
-        graph_t::vertex_iterator vclosest;
         pair<vertex_t, double> closest_vertex_p = rrt.getClosestVertex(thisNodePtr);
         vertex_t closest_vertex = closest_vertex_p.first;
         double min = closest_vertex_p.second;
         cout << min << endl;
 
         // Back out a node pointer from closest vertex
-        Vertex otherVertex = rrt.getGraph()[*vclosest];
+        Vertex otherVertex = rrt.getGraph()[closest_vertex];
         Node* otherNodePtr = otherVertex.ptr;
 
         // Check whether an edge can be made
@@ -676,8 +681,6 @@ int main(int argc, char **argv)
 
             // Add node to graph
             graph_t latest_graph = rrt.step(thisVertex);
-
-
 
             // Throttle publishing
             graph_pub.publish(linesFromGraph(latest_graph));
