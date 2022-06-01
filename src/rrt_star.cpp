@@ -520,11 +520,11 @@ visualization_msgs::Marker linesFromGraph(graph_t G)
         // Get nodes from vertices and add line
         Node* n1 = G[v1].ptr;
         Node* n2 = G[v2].ptr;
-        if (n < N)
-        {
+        // if (n < N)
+        // {
             updateLineList(&ret, n1, n2);
-            n++;
-        }
+        //     n++;
+        // }
     }
 
     return ret;
