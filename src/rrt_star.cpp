@@ -526,7 +526,7 @@ bool edgeValid(std::shared_ptr<planning_scene_monitor::PlanningSceneMonitor> psm
 {
     auto state1 = node1->getStatePtr();
     auto state2 = node2->getStatePtr();
-    auto inter_vec = interpolateStates(kinematic_model, state1, state2, 1);
+    auto inter_vec = interpolateStates(kinematic_model, state1, state2);
     return !checkCollisionMany(psm, inter_vec);
 };
 
@@ -621,7 +621,8 @@ int main(int argc, char **argv)
     Vertex end_vertex;
 
     // Generate start vertex
-    auto start_state = stateFromJoints(kinematic_model, START_JOINTS);
+    // auto start_state = stateFromJoints(kinematic_model, START_JOINTS);
+    auto start_state = randomState(kinematic_model);
     geometry_msgs::Pose start_ee_pose = getStatePose(start_state);
     Node* start_node_ptr = new Node(*start_state, start_ee_pose, 0, kinematic_model);
     start_vertex = {start_node_ptr};
@@ -641,8 +642,8 @@ int main(int argc, char **argv)
         // Pick a random configuration
         auto kinematic_state = randomState(kinematic_model);
 
-        // // With some probability, move towards goal instead
-        // if (uniform(rng) < 0.05 && count > 1)
+        // With some probability, move towards goal instead
+        // if (uniform(rng) < 0.999 && count > 1)
         // {
             // ROS_INFO("Attempting to extend to goal");
             // kinematic_state = stateFromJoints(kinematic_model, GOAL_JOINTS);
