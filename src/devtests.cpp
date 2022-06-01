@@ -415,6 +415,27 @@ std::vector<vertex_t> dijkstra(const graph_t& G, const vertex_t source, const ve
 }
 
 
+// Animate a path
+void animatePath(const moveit::core::RobotModelConstPtr& kinematic_model, ros::Publisher pub, graph_t G, std::vector<vertex_t> path)
+{
+    ros::Rate loop_rate(20);
+    for (int i = 0; i < path.size() - 1; i++)
+    {
+        auto state1 = G[path[i]].ptr->getStatePtr();
+        auto state2 = G[path[i+1]].ptr->getStatePtr();
+        auto inter_vec = interpolateStates(kinematic_model, state1, state2);
+
+        for (auto state : inter_vec)
+        {
+            pub.publish(displayMsgFromKin(state));
+            loop_rate.sleep();
+            if (!ros::ok()) break;
+        }
+        if (!ros::ok()) break;
+    }
+}
+
+
 // Boilerplate random number generation stuff
 std::uniform_real_distribution<double> uniform(0, 1);
 std::default_random_engine rng(time(NULL));
@@ -465,6 +486,7 @@ int main(int argc, char **argv)
 
     vertex_t start_vertex;
     vertex_t end_vertex;
+    std::vector<vertex_t> path;
 
     while (ros::ok())
     {
@@ -548,10 +570,10 @@ int main(int argc, char **argv)
         }
 
         // After graph is large try to run dijkstra
-        if (count > 1000)
+        if (count > 300)
         {
             end_vertex = thisVertexDesc;
-            auto path = dijkstra(G, start_vertex, end_vertex);
+            path = dijkstra(G, start_vertex, end_vertex);
             ROS_INFO("%d", int(path.size()));
 
             auto path_list = initLineList();
@@ -570,6 +592,12 @@ int main(int argc, char **argv)
         ros::spinOnce();
         loop_rate.sleep();
         count++;
+    }
+
+    // If ROS is still good, we broke because we found a path!
+    while(ros::ok())
+    {
+        animatePath(kinematic_model, state_pub, G, path);
     }
 
     return 0;
