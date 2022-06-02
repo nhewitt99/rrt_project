@@ -142,7 +142,7 @@ class RRTstar
             Cost.push_back(calculateCost(new_node_desc, nearest_neighbor));
 
             // Rewire neighbors so that the new node is now their parent node if this would result in a lower cost for that node
-            // rewireNeighbors(new_node_desc, neighbors);
+            rewireNeighbors(new_node_desc, neighbors, nearest_neighbor);
 
             // Link together new vertex with its nearest neighbor
             linkNewVertex(new_node_desc, nearest_neighbor);
@@ -364,19 +364,6 @@ class RRTstar
         {
             cout << "getNearestNeighbor()" << endl;
 
-            // If there are 0 neighbors, then the new node is the root node.
-            // It's nearest neighbor is itself
-            if (neighbors.size() == 0)
-            {
-                cout << "Joints: " << endl;
-                for (double& j: G[new_node].ptr->getJoints())
-                {
-                    cout << j << endl;
-                }
-                // cout << "return new_node" << endl;
-                return new_node;
-            }
-
             // Initialze variables for storing nearest neighbor info
             double min_distance = -1.0;
             // cout << "Set min_distance" << endl;
@@ -438,28 +425,31 @@ class RRTstar
             boost::remove_edge(A, B, G);
         }
 
-        void rewireNeighbors(vertex_t new_vertex, vector<vertex_t> neighbors)
+        void rewireNeighbors(vertex_t new_vertex, vector<vertex_t> neighbors, vertex_t nearest_neighbor)
         {
             cout << "rewireNeighbors()" << endl;
             for (vertex_t& neighbor: neighbors)
             {
-                // If jumping from the new vertex to this neighbor is cheaper than jumping from the
-                // neighbor's parent to the neighbor, then the new vertex is now the parent.
-                // Congrats and good luck on raising that vertex to be a good upstanding citizen
-                // cout << "Cost.size(): " << Cost.size() << " | Id(new_vertex): " << Id(new_vertex) << " | Id(neighbor): " << Id(neighbor) << endl;
-                if (Cost[Id(new_vertex)] + calculateCost(new_vertex, neighbor) < Cost[Id(neighbor)])
+                if (Id(neighbor) != Id(nearest_neighbor))
                 {
-                    cout << "if true" << endl;
-                    // Set new cost for the neighbor
-                    Cost[Id(neighbor)] = Cost[Id(new_vertex)] + calculateCost(new_vertex, neighbor);
-                    // cout << "set cost" << endl;
+                    // If jumping from the new vertex to this neighbor is cheaper than jumping from the
+                    // neighbor's parent to the neighbor, then the new vertex is now the parent.
+                    // Congrats and good luck on raising that vertex to be a good upstanding citizen
+                    // cout << "Cost.size(): " << Cost.size() << " | Id(new_vertex): " << Id(new_vertex) << " | Id(neighbor): " << Id(neighbor) << endl;
+                    if (Cost[Id(new_vertex)] + calculateCost(new_vertex, neighbor) < Cost[Id(neighbor)])
+                    {
+                        cout << "if true" << endl;
+                        // Set new cost for the neighbor
+                        Cost[Id(neighbor)] = Cost[Id(new_vertex)] + calculateCost(new_vertex, neighbor);
+                        // cout << "set cost" << endl;
 
-                    // cout << "Parents.size() " << Parents.size() << endl;
-                    // Delink the neighbor from its original parent
-                    deLinkVertices(neighbor, Parents[Id(neighbor)]);
+                        // cout << "Parents.size() " << Parents.size() << endl;
+                        // Delink the neighbor from its original parent
+                        deLinkVertices(neighbor, Parents[Id(neighbor)]);
 
-                    // Link the neighbor as a "new" vertex to the actually new vertex
-                    linkNewVertex(neighbor, new_vertex);
+                        // Link the neighbor as a "new" vertex to the actually new vertex
+                        linkNewVertex(neighbor, new_vertex);
+                    }
                 }
             }
         }
@@ -478,6 +468,7 @@ visualization_msgs::Marker initLineList()
     line_list.id = 0;
     line_list.type = visualization_msgs::Marker::LINE_LIST;
     line_list.scale.x = 0.01;
+    line_list.color.r = 1.0;
     line_list.color.g = 1.0;
     line_list.color.a = 1.0;
     return line_list;
@@ -508,7 +499,7 @@ visualization_msgs::Marker linesFromGraph(graph_t G)
     auto ret = initLineList();
 
     // Iterate over edges of graph (only the first N edges)
-    int N = 5;
+    int N = 300;
     int n = 0;
     auto es = boost::edges(G);
     for (auto edge_iter = es.first; edge_iter != es.second; ++edge_iter)
@@ -520,11 +511,11 @@ visualization_msgs::Marker linesFromGraph(graph_t G)
         // Get nodes from vertices and add line
         Node* n1 = G[v1].ptr;
         Node* n2 = G[v2].ptr;
-        // if (n < N)
-        // {
+        if (n < N)
+        {
             updateLineList(&ret, n1, n2);
-        //     n++;
-        // }
+            // n++;
+        }
     }
 
     return ret;
@@ -650,7 +641,7 @@ bool edgeValid(std::shared_ptr<planning_scene_monitor::PlanningSceneMonitor> psm
 // Generate a state that extends towards another in c-space, less than some length in rads
 moveit::core::RobotStatePtr extend(const moveit::core::RobotModelConstPtr& kinematic_model,
                                    moveit::core::RobotStatePtr state1,
-                                   moveit::core::RobotStatePtr state2, double max=0.49)
+                                   moveit::core::RobotStatePtr state2, double max=0.45)
 {
     // Get joint parameters from model
     const moveit::core::JointModelGroup* joint_model_group = kinematic_model->getJointModelGroup("panda_arm");
