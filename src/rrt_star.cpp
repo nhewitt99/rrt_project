@@ -29,7 +29,7 @@
 using namespace std;
 
 const std::vector<double> START_JOINTS = {0.8007, 0.6576, 0.8774, -0.8879, -0.5002, 1.3726, 2.2410};
-const std::vector<double> GOAL_JOINTS = {-0.5265, 1.0870, 0.2671, -1.6648, 2.6357, 0.4429, -0.8478};
+const std::vector<double> GOAL_JOINTS = {-0.5265, 1.0870, 0.2671, -1.6648, 1.6357, 1.0, -0.8478};
 
 // Boilerplate random number generation stuff
 std::uniform_real_distribution<double> uniform(0, 1);
@@ -506,6 +506,8 @@ bool checkCollisionMany(std::shared_ptr<planning_scene_monitor::PlanningSceneMon
     // Get a readonly copy of planning scene
     auto locked_psm = planning_scene_monitor::LockedPlanningSceneRO(psm);
 
+    collision_result.clear();
+
     for (auto kinematic_state : kinematic_state_vec)
     {
         locked_psm->checkCollision(collision_request, collision_result, *kinematic_state);
@@ -533,7 +535,7 @@ bool edgeValid(std::shared_ptr<planning_scene_monitor::PlanningSceneMonitor> psm
 // Generate a state that extends towards another in c-space, less than some length in rads
 moveit::core::RobotStatePtr extend(const moveit::core::RobotModelConstPtr& kinematic_model,
                                    moveit::core::RobotStatePtr state1,
-                                   moveit::core::RobotStatePtr state2, double max=0.5)
+                                   moveit::core::RobotStatePtr state2, double max=0.45)
 {
     // Get joint parameters from model
     const moveit::core::JointModelGroup* joint_model_group = kinematic_model->getJointModelGroup("panda_arm");
@@ -588,6 +590,16 @@ moveit::core::RobotStatePtr extend(const moveit::core::RobotModelConstPtr& kinem
     }
 }
 
+// Convert a kinematic state to a displayable message type
+moveit_msgs::DisplayRobotState displayMsgFromKin(moveit::core::RobotStatePtr kinematic_state)
+{
+        moveit_msgs::RobotState state_msg;
+        moveit::core::robotStateToRobotStateMsg(*kinematic_state, state_msg);
+        moveit_msgs::DisplayRobotState display_msg;
+        display_msg.state = state_msg;
+        return display_msg;
+}
+
 int main(int argc, char **argv)
 {
     ros::init(argc, argv, "devtests");
@@ -614,15 +626,15 @@ int main(int argc, char **argv)
 
     ros::Publisher state_pub = n.advertise<moveit_msgs::DisplayRobotState>("display_robot_state_test", 1000);
     ros::Publisher graph_pub = n.advertise<visualization_msgs::Marker>("graph_lines", 1000);
-    ros::Rate loop_rate(100);
+    ros::Rate loop_rate(1);
     int count = 1;
 
     Vertex start_vertex;
     Vertex end_vertex;
 
     // Generate start vertex
-    // auto start_state = stateFromJoints(kinematic_model, START_JOINTS);
-    auto start_state = randomState(kinematic_model);
+    auto start_state = stateFromJoints(kinematic_model, START_JOINTS);
+    // auto start_state = randomState(kinematic_model);
     geometry_msgs::Pose start_ee_pose = getStatePose(start_state);
     Node* start_node_ptr = new Node(*start_state, start_ee_pose, 0, kinematic_model);
     start_vertex = {start_node_ptr};
@@ -644,10 +656,11 @@ int main(int argc, char **argv)
 
         // With some probability, move towards goal instead
         // if (uniform(rng) < 0.999 && count > 1)
-        // {
-            // ROS_INFO("Attempting to extend to goal");
-            // kinematic_state = stateFromJoints(kinematic_model, GOAL_JOINTS);
-        // }
+        if (true)
+        {
+            ROS_INFO("Attempting to extend to goal");
+            kinematic_state = stateFromJoints(kinematic_model, GOAL_JOINTS);
+        }
         auto ee_pose = getStatePose(kinematic_state);
 
         // Build a node from this configuration, package into a vertex
@@ -665,23 +678,28 @@ int main(int argc, char **argv)
         Vertex otherVertex = rrt.getGraph()[closest_vertex];
         Node* otherNodePtr = otherVertex.ptr;
 
+        // Use extend to move in direction of new point
+        auto extended_state = extend(kinematic_model, otherNodePtr->getStatePtr(), thisNodePtr->getStatePtr());
+        auto extend_ee_pose = getStatePose(extended_state);
+
+        // Redefine this node as extended node
+        Node* extendNodePtr = new Node(*extended_state, extend_ee_pose, rrt.getNewNodeId(), kinematic_model);
+        Vertex extendVertex = {extendNodePtr};
+        state_pub.publish(displayMsgFromKin(extended_state));
+
         // Check whether an edge can be made
-        if (edgeValid(psm, kinematic_model, thisNodePtr, otherNodePtr))
+        if (edgeValid(psm, kinematic_model, extendNodePtr, otherNodePtr))
         {
             ROS_INFO("Adding an edge!");
             cout << "add_count: " << add_count << endl;
             add_count = add_count + 1;
 
-            // Use extend to move in direction of new point
-            auto extended_state = extend(kinematic_model, otherNodePtr->getStatePtr(), thisNodePtr->getStatePtr());
-            auto ee_pose = getStatePose(extended_state);
-
             // Update the candidate node
-            thisNodePtr = new Node(*extended_state, ee_pose, rrt.getNewNodeId(), kinematic_model);
-            thisVertex = {thisNodePtr};
+            // thisNodePtr = new Node(*extended_state, extend_ee_pose, rrt.getNewNodeId(), kinematic_model);
+            // thisVertex = {thisNodePtr};
 
             // Add node to graph
-            graph_t latest_graph = rrt.step(thisVertex);
+            graph_t latest_graph = rrt.step(extendVertex);
 
             // Throttle publishing
             graph_pub.publish(linesFromGraph(latest_graph));
@@ -690,6 +708,7 @@ int main(int argc, char **argv)
         {
             ROS_INFO("The closest edge was invalid!");
         }
+        loop_rate.sleep();
     }
 
 }
