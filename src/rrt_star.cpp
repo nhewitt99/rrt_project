@@ -30,7 +30,7 @@
 using namespace std;
 
 const std::vector<double> START_JOINTS = {0.8007, 0.6576, 0.8774, -0.8879, -0.5002, 1.3726, 2.2410};
-const std::vector<double> GOAL_JOINTS = {-0.5265, 1.0870, 0.2671, -1.6648, 2.6357, 0.4429, -0.8478};
+const std::vector<double> GOAL_JOINTS = {-0.5265, 1.0870, 0.2671, -1.6648, 1.6357, 0.4429, -0.8478};
 
 // Boilerplate random number generation stuff
 std::uniform_real_distribution<double> uniform(0, 1);
@@ -159,12 +159,14 @@ class RRTstar
             for (boost::tie(e,e_end) = boost::edges(G); e != e_end; ++e)
             {
                 num_edges = num_edges + 1;
+                cout << "num_edges: " << num_edges << endl;
             }
             int num_vertices = 0;
             graph_t::vertex_iterator v, v_end;
             for (boost::tie(v, v_end) = boost::vertices(G); v != v_end; ++v)
             {
                 num_vertices = num_vertices + 1;
+                cout << "num_vertices: " << num_vertices << endl;
             }
             // cout << "num_edges: " << num_edges << " | num_vertices: " << num_vertices << endl;
 
@@ -660,10 +662,10 @@ bool edgeValid(std::shared_ptr<planning_scene_monitor::PlanningSceneMonitor> psm
     // TODO: Undo what I'm about to put here
 
 
-    // std::vector<moveit::core::RobotStatePtr> inter_vec = interpolateStates(kinematic_model, state1, state2, 10);
+    std::vector<moveit::core::RobotStatePtr> inter_vec = interpolateStates(kinematic_model, state1, state2, 10);
     // std::vector<moveit::core::RobotStatePtr> inter_vec = {state1, state2};
     // std::vector<moveit::core::RobotStatePtr> inter_vec = {state1};
-    std::vector<moveit::core::RobotStatePtr> inter_vec = {state1, state2};
+    // std::vector<moveit::core::RobotStatePtr> inter_vec = {state1, state2};
     Joints joints1 = node1->getJoints();
     cout << "State 1:" << endl;
     for (double& j: joints1)
@@ -745,6 +747,16 @@ moveit::core::RobotStatePtr extend(const moveit::core::RobotModelConstPtr& kinem
     }
 }
 
+// Convert a kinematic state to a displayable message type
+moveit_msgs::DisplayRobotState displayMsgFromKin(moveit::core::RobotStatePtr kinematic_state)
+{
+        moveit_msgs::RobotState state_msg;
+        moveit::core::robotStateToRobotStateMsg(*kinematic_state, state_msg);
+        moveit_msgs::DisplayRobotState display_msg;
+        display_msg.state = state_msg;
+        return display_msg;
+}
+
 int main(int argc, char **argv)
 {
     ros::init(argc, argv, "devtests");
@@ -771,7 +783,7 @@ int main(int argc, char **argv)
 
     ros::Publisher state_pub = n.advertise<moveit_msgs::DisplayRobotState>("display_robot_state_test", 1000);
     ros::Publisher graph_pub = n.advertise<visualization_msgs::Marker>("graph_lines", 1000);
-    ros::Rate loop_rate(100);
+    ros::Rate loop_rate(1);
     int count = 1;
 
     Vertex start_vertex;
@@ -840,6 +852,7 @@ int main(int argc, char **argv)
 
         // Check that the edge is valid to the extended point
         Node* extendNodePtr = new Node(*extended_state, extended_ee_pose, rrt.getNewNodeId(), kinematic_model);
+        state_pub.publish(displayMsgFromKin(extended_state));
 
         // Check whether an edge can be made
         if (edgeValid(psm, kinematic_model, extendNodePtr, otherNodePtr))
@@ -867,18 +880,19 @@ int main(int argc, char **argv)
             graph_pub.publish(linesFromGraph(latest_graph));
             ic++;
 
-            if (add_count == 1)
-            {
-                // segfault
-                Joints seg;
-                double fault = seg[0];
-            }
+            // if (add_count == 5)
+            // {
+            //     // segfault
+            //     Joints seg;
+            //     double fault = seg[0];
+            // }
         }
         else
         {
             ROS_INFO("The closest edge was invalid!");
         }
         count++;
+        loop_rate.sleep();
     }
 
 }
