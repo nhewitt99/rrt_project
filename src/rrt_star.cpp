@@ -17,6 +17,7 @@
 
 #include <boost/graph/graph_traits.hpp>
 #include <boost/graph/adjacency_list.hpp>
+#include <boost/graph/dijkstra_shortest_paths.hpp>
 
 #include <moveit_msgs/RobotState.h>
 #include <moveit_msgs/DisplayRobotState.h>
@@ -141,6 +142,12 @@ class RRTstar
             // NOT the overall cost to get to the new vertex
             Cost.push_back(calculateCost(new_node_desc, nearest_neighbor));
 
+            if (G[nearest_neighbor].ptr->getJoints()[0] == G[new_node_desc].ptr->getJoints()[0])
+            {
+                "new node is already on the graph. Not linking vertex";
+                return G;
+            }
+
             // Rewire neighbors so that the new node is now their parent node if this would result in a lower cost for that node
             rewireNeighbors(new_node_desc, neighbors, nearest_neighbor);
 
@@ -159,7 +166,7 @@ class RRTstar
             {
                 num_vertices = num_vertices + 1;
             }
-            cout << "num_edges: " << num_edges << " | num_vertices: " << num_vertices << endl;
+            // cout << "num_edges: " << num_edges << " | num_vertices: " << num_vertices << endl;
 
             return G;
         }
@@ -173,14 +180,14 @@ class RRTstar
         }
         pair<vertex_t, double> getClosestVertex(Node* new_node_ptr)
         {
-            cout << "getClosestVertex" << endl;
+            // cout << "getClosestVertex()" << endl;
             double min_distance = -1.0;
             vertex_t v_closest;
             graph_t::vertex_iterator v, v_end;
             int count = 0;
             for (boost::tie(v, v_end) = boost::vertices(G); v != v_end; ++v)
             {
-                cout << "count: " << count << endl;
+                // cout << "count: " << count << endl;
                 count = count +1;
 
                 Vertex other_vertex = G[*v];
@@ -188,12 +195,12 @@ class RRTstar
 
                 double distance = calculateJointDistance(new_node_ptr->getJoints(), other_node.getJoints());
 
-                cout << "num joints: " << new_node_ptr->getJoints().size() << " | " << other_node.getJoints().size() << endl;
+                // cout << "num joints: " << new_node_ptr->getJoints().size() << " | " << other_node.getJoints().size() << endl;
 
                 bool same_joints = true;
                 for (int i = 0; i<new_node_ptr->getJoints().size(); i++)
                 {
-                    cout << new_node_ptr->getJoints()[i] << " | " << other_node.getJoints()[i] << endl;
+                    // cout << new_node_ptr->getJoints()[i] << " | " << other_node.getJoints()[i] << endl;
                     if (new_node_ptr->getJoints()[i] != other_node.getJoints()[i])
                     {
                         same_joints = false;
@@ -217,7 +224,7 @@ class RRTstar
                     v_closest = *v;
                 }
             }
-            cout << "v_closest id: " << G[v_closest].ptr->getId() << endl;
+            // cout << "v_closest id: " << G[v_closest].ptr->getId() << endl;
             return make_pair(v_closest, min_distance);
         }
     private:
@@ -350,11 +357,11 @@ class RRTstar
                 }
             }
 
-            cout << "Joints: " << endl;
-            for (double& j: G[new_node_desc].ptr->getJoints())
-            {
-                cout << j << endl;
-            }
+            // cout << "Joints: " << endl;
+            // for (double& j: G[new_node_desc].ptr->getJoints())
+            // {
+            //     cout << j << endl;
+            // }
 
             // cout << "neighbors.size()" << neighbors.size() << endl;
             return neighbors;
@@ -391,27 +398,29 @@ class RRTstar
                     nearest_neighbor = neighbor;
                 }
             }
-            cout << "Joints: " << endl;
-            for (double& j: G[new_node].ptr->getJoints())
-            {
-                cout << j << endl;
-            }
+            // cout << "Joints: " << endl;
+            // for (double& j: G[new_node].ptr->getJoints())
+            // {
+            //     cout << j << endl;
+            // }
             return nearest_neighbor;
         }
 
         void linkNewVertex(vertex_t new_vertex, vertex_t existing_vertex)
         {
-            cout << "linkNewVertex" << endl;
+            cout << "linkNewVertex()" << endl;
             if (G[new_vertex].ptr->getJoints()[0] == G[existing_vertex].ptr->getJoints()[0])
             {
-                cout << "New vertex and existing vertex match. Purposefully causing segfault." << endl;
-                cout << "Joints: " << endl;
-                for (double& j: G[new_vertex].ptr->getJoints())
-                {
-                    cout << j << endl;
-                }
-                Joints j;
-                double i = j[0];
+                // cout << "New vertex and existing vertex match. Purposefully causing segfault." << endl;
+                // cout << "Joints: " << endl;
+                // for (double& j: G[new_vertex].ptr->getJoints())
+                // {
+                //     cout << j << endl;
+                // }
+                // Joints j;
+                // double i = j[0];
+                cout << "New vertex and existing vertex match. Not linking new vertex." << endl;
+                return;
             }
 
             // Assign parent to new vertex
@@ -421,7 +430,7 @@ class RRTstar
 
         void deLinkVertices(vertex_t A, vertex_t B)
         {
-            cout << "deLinkVertices" << endl;
+            cout << "deLinkVertices()" << endl;
             boost::remove_edge(A, B, G);
         }
 
@@ -438,7 +447,7 @@ class RRTstar
                     // cout << "Cost.size(): " << Cost.size() << " | Id(new_vertex): " << Id(new_vertex) << " | Id(neighbor): " << Id(neighbor) << endl;
                     if (Cost[Id(new_vertex)] + calculateCost(new_vertex, neighbor) < Cost[Id(neighbor)])
                     {
-                        cout << "if true" << endl;
+                        // cout << "if true" << endl;
                         // Set new cost for the neighbor
                         Cost[Id(neighbor)] = Cost[Id(new_vertex)] + calculateCost(new_vertex, neighbor);
                         // cout << "set cost" << endl;
@@ -478,7 +487,7 @@ visualization_msgs::Marker initLineList()
 // Add an edge between two nodes to an existing line_list marker
 void updateLineList(visualization_msgs::Marker* m, Node* node1ptr, Node* node2ptr)
 {
-    cout << "updateLineList()" << endl;
+    // cout << "updateLineList()" << endl;
     m->header.stamp = ros::Time::now();
 
     geometry_msgs::Point point1 = node1ptr->getPose().position;
@@ -486,8 +495,8 @@ void updateLineList(visualization_msgs::Marker* m, Node* node1ptr, Node* node2pt
     m->points.push_back(point1);
     m->points.push_back(point2);
 
-    cout << point1 << endl;
-    cout << point2 << endl;
+    // cout << point1 << endl;
+    // cout << point2 << endl;
 };
 
 
@@ -614,28 +623,66 @@ bool checkCollisionMany(std::shared_ptr<planning_scene_monitor::PlanningSceneMon
     // Get a readonly copy of planning scene
     auto locked_psm = planning_scene_monitor::LockedPlanningSceneRO(psm);
 
-    for (auto kinematic_state : kinematic_state_vec)
+    // Clear result before starting collision checks
+    collision_result.clear();
+
+    bool collision_detected = false;
+    int c = 1;
+    for (moveit::core::RobotStatePtr& kinematic_state : kinematic_state_vec)
     {
         locked_psm->checkCollision(collision_request, collision_result, *kinematic_state);
 
         // If at least one collides, return true
-        if (collision_result.collision) return true;
+        if (collision_result.collision) {
+            cout << "c: " << c << endl;
+            collision_detected = true;
+        }
 
         // Reset query for next check
         collision_result.clear();
+
+        c++;
     }
 
-    return false;
+    return collision_detected;
+    // return false;
 };
 
 // Check if an edge is valid between two nodes
 bool edgeValid(std::shared_ptr<planning_scene_monitor::PlanningSceneMonitor> psm,
                 const moveit::core::RobotModelConstPtr& kinematic_model, Node* node1, Node* node2)
 {
-    auto state1 = node1->getStatePtr();
-    auto state2 = node2->getStatePtr();
-    auto inter_vec = interpolateStates(kinematic_model, state1, state2);
+    // state 1 is typically the new state
+    // state 2 is typically a state already in the graph
+
+    moveit::core::RobotStatePtr state1 = node1->getStatePtr();
+    moveit::core::RobotStatePtr state2 = node2->getStatePtr();
+    // TODO: Undo what I'm about to put here
+
+
+    // std::vector<moveit::core::RobotStatePtr> inter_vec = interpolateStates(kinematic_model, state1, state2, 10);
+    // std::vector<moveit::core::RobotStatePtr> inter_vec = {state1, state2};
+    // std::vector<moveit::core::RobotStatePtr> inter_vec = {state1};
+    std::vector<moveit::core::RobotStatePtr> inter_vec = {state1, state2};
+    Joints joints1 = node1->getJoints();
+    cout << "State 1:" << endl;
+    for (double& j: joints1)
+    {
+        cout << j << endl;
+    }
+    cout << "State 2:" << endl;
+    Joints joints2 = node2->getJoints();
+    for (double& j: joints2)
+    {
+        cout << j << endl;
+    }
+    // // segfault
+    // Joints seg;
+    // double fault = seg[0];
     return !checkCollisionMany(psm, inter_vec);
+
+    // std::vector<moveit::core::RobotStatePtr> inter_vec = {state1, state2};
+    // return true;
 };
 
 // Generate a state that extends towards another in c-space, less than some length in rads
@@ -649,12 +696,14 @@ moveit::core::RobotStatePtr extend(const moveit::core::RobotModelConstPtr& kinem
     // Get joint values for start and end
     std::vector<double> current_values;
     std::vector<double> end_values;
+    // State 1 is current state of the robot
     state1->copyJointGroupPositions(joint_model_group, current_values);
+    // State 2 is the desired state of the robot
     state2->copyJointGroupPositions(joint_model_group, end_values);
 
 
-    std::cout << current_values[0] << std::endl;
-    std::cout << end_values[0] << std::endl;
+    // std::cout << current_values[0] << std::endl;
+    // std::cout << end_values[0] << std::endl;
 
     // Get difference
     std::vector<double> diff_values;
@@ -746,6 +795,7 @@ int main(int argc, char **argv)
     int add_count = 0;
     int ic = 0;
     bool p = false;
+    bool extend_goal;
     while (ros::ok())
     // for (int i = 0; i < 100; i++)
     {
@@ -753,11 +803,16 @@ int main(int argc, char **argv)
         auto kinematic_state = randomState(kinematic_model);
 
         // With some probability, move towards goal instead
+        extend_goal = false;
         // if (uniform(rng) < 0.999 && count > 1)
-        // {
-            // ROS_INFO("Attempting to extend to goal");
-            // kinematic_state = stateFromJoints(kinematic_model, GOAL_JOINTS);
-        // }
+        // if (count >= 1)
+        if (true)
+        {
+            // cout << "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA" << endl;
+            ROS_INFO("Attempting to extend to goal");
+            kinematic_state = stateFromJoints(kinematic_model, GOAL_JOINTS);
+            extend_goal = true;
+        }
         auto ee_pose = getStatePose(kinematic_state);
 
         // Build a node from this configuration, package into a vertex
@@ -769,25 +824,40 @@ int main(int argc, char **argv)
         pair<vertex_t, double> closest_vertex_p = rrt.getClosestVertex(thisNodePtr);
         vertex_t closest_vertex = closest_vertex_p.first;
         double min = closest_vertex_p.second;
-        cout << min << endl;
+        // cout << min << endl;
 
         // Back out a node pointer from closest vertex
         Vertex otherVertex = rrt.getGraph()[closest_vertex];
         Node* otherNodePtr = otherVertex.ptr;
 
+        // thisNodePtr is a new node
+        // otherNodePtr is an existing node in the graph
+
+        // Extend tree towards new node
+        // Use extend to move in direction of new point
+        moveit::core::RobotStatePtr extended_state = extend(kinematic_model, otherNodePtr->getStatePtr(), thisNodePtr->getStatePtr());
+        geometry_msgs::Pose extended_ee_pose = getStatePose(extended_state);
+
+        // Check that the edge is valid to the extended point
+        Node* extendNodePtr = new Node(*extended_state, extended_ee_pose, rrt.getNewNodeId(), kinematic_model);
+
         // Check whether an edge can be made
-        if (edgeValid(psm, kinematic_model, thisNodePtr, otherNodePtr))
+        if (edgeValid(psm, kinematic_model, extendNodePtr, otherNodePtr))
         {
-            ROS_INFO("Adding an edge!");
-            cout << "add_count: " << add_count << endl;
+            // ROS_INFO("Adding an edge!");
+            if (extend_goal)
+            {
+                ROS_INFO("Adding extended goal edge!");
+            }
+            // else
+            // {
+            //     ROS_INFO("Adding random edge!");
+            // }
+            // cout << "add_count: " << add_count << endl;
             add_count = add_count + 1;
 
-            // Use extend to move in direction of new point
-            auto extended_state = extend(kinematic_model, otherNodePtr->getStatePtr(), thisNodePtr->getStatePtr());
-            auto ee_pose = getStatePose(extended_state);
-
             // Update the candidate node
-            thisNodePtr = new Node(*extended_state, ee_pose, rrt.getNewNodeId(), kinematic_model);
+            thisNodePtr = new Node(*extended_state, extended_ee_pose, rrt.getNewNodeId(), kinematic_model);
             thisVertex = {thisNodePtr};
 
             // Add node to graph
@@ -796,11 +866,19 @@ int main(int argc, char **argv)
             // Throttle publishing
             graph_pub.publish(linesFromGraph(latest_graph));
             ic++;
+
+            if (add_count == 1)
+            {
+                // segfault
+                Joints seg;
+                double fault = seg[0];
+            }
         }
         else
         {
             ROS_INFO("The closest edge was invalid!");
         }
+        count++;
     }
 
 }
