@@ -209,7 +209,6 @@ class RRTstar
                     v_closest = *v;
                 }
             }
-            cout << "v_closest id: " << G[v_closest].ptr->getId() << endl;
             return make_pair(v_closest, min_distance);
         }
     private:
@@ -698,16 +697,38 @@ void animatePath(const moveit::core::RobotModelConstPtr& kinematic_model, ros::P
 }
 
 
-int main(int argc, char **argv)
+// Find the total distance covered in joint space along a path
+double calculatePathLength(graph_t G, std::vector<vertex_t> path)
 {
-    ros::init(argc, argv, "devtests");
-    ros::AsyncSpinner spinner(1);
-    spinner.start();
+    double ret = 0;
 
-    ros::NodeHandle n;
+    for (int i = 0; i < path.size() - 1; i++)
+    {
+        auto joints1 = G[path[i]].ptr->getJoints();
+        auto joints2 = G[path[i+1]].ptr->getJoints();
 
-    // Get up to date planning scene
-    auto psm = std::make_shared<planning_scene_monitor::PlanningSceneMonitor>("robot_description");
+        double squared_sum = 0;
+        for (int j = 0; j < joints1.size(); j++)
+        {
+            squared_sum += pow(joints1[j] - joints2[j], 2);
+        }
+
+        ret += sqrt(squared_sum);
+    }
+
+    return ret;
+}
+
+
+std::pair<graph_t, std::vector<vertex_t>> runExperiment(std::shared_ptr<planning_scene_monitor::PlanningSceneMonitor> psm)
+{
+    double startTime = ros::Time::now().toSec();
+
+    // Empty return value by default
+    graph_t emptyG;
+    std::vector<vertex_t> emptyVec;
+    auto emptyRet = std::make_pair(emptyG, emptyVec);
+
     psm->startSceneMonitor("/move_group/monitored_planning_scene");
     psm->requestPlanningSceneState("/get_planning_scene");
 
@@ -719,21 +740,11 @@ int main(int argc, char **argv)
     const moveit::core::JointModelGroup* joint_model_group = kinematic_model->getJointModelGroup("panda_arm");
     const std::vector<std::string>& joint_names = joint_model_group->getVariableNames();
 
-    // Set up message to publish lines
-    auto line_list = initLineList();
-
-    ros::Publisher state_pub = n.advertise<moveit_msgs::DisplayRobotState>("display_robot_state_test", 1000);
-    ros::Publisher graph_pub = n.advertise<visualization_msgs::Marker>("graph_lines", 1000);
-    ros::Rate loop_rate(1000);
-
-    Vertex start_vertex;
-
     // Generate start vertex
     auto start_state = stateFromJoints(kinematic_model, START_JOINTS);
-    // auto start_state = randomState(kinematic_model);
     geometry_msgs::Pose start_ee_pose = getStatePose(start_state);
     Node* start_node_ptr = new Node(*start_state, start_ee_pose, 0, kinematic_model);
-    start_vertex = {start_node_ptr};
+    Vertex start_vertex = {start_node_ptr};
 
     // Generate end vertex
     auto end_state = stateFromJoints(kinematic_model, GOAL_JOINTS);
@@ -750,14 +761,19 @@ int main(int argc, char **argv)
     int add_count = 0;
     while (ros::ok() && !end_flag)
     {
+        if (ros::Time::now().toSec() - startTime > 30)
+        {
+            ROS_WARN("No solution found in 30s!");
+            return emptyRet;
+        }
+
         // Pick a random configuration
         auto kinematic_state = randomState(kinematic_model);
 
         // With some probability, move towards goal instead
         if (uniform(rng) < 0.10 && add_count > 0)
-//        if (true)
         {
-            ROS_INFO("Attempting to extend to goal");
+//            ROS_INFO("Attempting to extend to goal");
             kinematic_state = stateFromJoints(kinematic_model, GOAL_JOINTS);
         }
         auto ee_pose = getStatePose(kinematic_state);
@@ -771,7 +787,6 @@ int main(int argc, char **argv)
         pair<vertex_t, double> closest_vertex_p = rrt.getClosestVertex(thisNodePtr);
         vertex_t closest_vertex = closest_vertex_p.first;
         double min = closest_vertex_p.second;
-//        cout << min << endl;
 
         // Back out a node pointer from closest vertex
         Vertex otherVertex = rrt.getGraph()[closest_vertex];
@@ -788,42 +803,25 @@ int main(int argc, char **argv)
         // Check whether an edge can be made
         if (edgeValid(psm, kinematic_model, extendNodePtr, otherNodePtr))
         {
-            // Update the candidate node
-            // thisNodePtr = new Node(*extended_state, extend_ee_pose, rrt.getNewNodeId(), kinematic_model);
-            // thisVertex = {thisNodePtr};
-
             // Add node to graph
             int step_out = rrt.step(extendVertex);
 
             if (step_out == 0)
             {
-//                ROS_INFO("Adding an edge!");
                 add_count = add_count + 1;
-//                cout << "add_count: " << add_count << endl;
             }
             else if (step_out == -1)
             {
-                ROS_INFO("Did not add edge. New node already in graph.");
-            }
-
-            // Get the latest graph
-            graph_t latest_graph = rrt.getGraph();
-
-            // Publish graph visualization
-            if (add_count % 100 == 0)
-            {
-                graph_pub.publish(linesFromGraph(latest_graph));
-                state_pub.publish(displayMsgFromKin(extended_state));
+//                ROS_INFO("Did not add edge. New node already in graph.");
             }
         }
         else
         {
-            ROS_INFO("The closest edge was invalid!");
+//            ROS_INFO("The closest edge was invalid!");
         }
 
         // Check for goal
         auto goal_result = rrt.getClosestVertex(end_node_ptr);
-        ROS_INFO("%f", goal_result.second);
         if (goal_step < 0 && goal_result.second < 0.01)
         {
             ROS_INFO("Goal added to graph!");
@@ -831,21 +829,49 @@ int main(int argc, char **argv)
             goal_vertex = goal_result.first;
         }
 
-        if (goal_step > 0 && add_count + goal_step > 2000)
+        if (goal_step > 0 && add_count - goal_step > 1000)
         {
             ROS_INFO("Added 1000 more nodes after goal, stopping!");
             end_flag = true;
         }
-
-        loop_rate.sleep();
     }
 
-    if (!ros::ok()) return 0;
+    if (!ros::ok()) return emptyRet;
 
     // Find path
     auto G = rrt.getGraph();
     auto path = dijkstra(G, rrt.getFirstVertex(), goal_vertex);
-    ROS_INFO("Final path has %d waypoints", int(path.size()));
+
+    double elapsedTime = ros::Time::now().toSec() - startTime;
+    double pathLength = calculatePathLength(G, path);
+    ROS_INFO("Found a path in %f seconds, with %d waypoints and a total c-space distance of %f.",
+                elapsedTime, int(path.size()), pathLength);
+    ROS_INFO("   Graph had %d vertices.", add_count);
+
+    return std::make_pair(G, path);
+}
+
+
+int main(int argc, char **argv)
+{
+    ros::init(argc, argv, "devtests");
+    ros::AsyncSpinner spinner(1);
+    spinner.start();
+
+    ros::NodeHandle n;
+
+    // Get up to date planning scene
+    auto psm = std::make_shared<planning_scene_monitor::PlanningSceneMonitor>("robot_description");
+
+    for (int i = 0; i < 19 && ros::ok(); i++) runExperiment(psm);
+
+    if (!ros::ok()) return 0;
+
+    auto result = runExperiment(psm);
+
+    return 0;
+    auto G = result.first;
+    auto path = result.second;
 
     // Set up path marker
     auto path_list = initLineList();
@@ -859,7 +885,11 @@ int main(int argc, char **argv)
         updateLineList(&path_list, G[path[i]].ptr, G[path[i+1]].ptr);
     }
 
-    // Publisher
+    // Construct a RobotModel by looking up the description on the parameter server
+    const moveit::core::RobotModelConstPtr& kinematic_model = psm->getRobotModel();
+
+    // Publishers
+    ros::Publisher state_pub = n.advertise<moveit_msgs::DisplayRobotState>("display_robot_state_test", 1000);
     ros::Publisher path_pub = n.advertise<visualization_msgs::Marker>("path_lines", 1000);
 
     // Animate path until node killed
@@ -868,5 +898,169 @@ int main(int argc, char **argv)
         path_pub.publish(path_list);
         animatePath(kinematic_model, state_pub, G, path);
     }
-
 }
+
+
+
+//    psm->startSceneMonitor("/move_group/monitored_planning_scene");
+//    psm->requestPlanningSceneState("/get_planning_scene");
+//
+//    // Construct a RobotModel by looking up the description on the parameter server
+//    const moveit::core::RobotModelConstPtr& kinematic_model = psm->getRobotModel();
+//    ROS_INFO("Model frame: %s", kinematic_model->getModelFrame().c_str());
+//
+//    // Get joint information from model
+//    const moveit::core::JointModelGroup* joint_model_group = kinematic_model->getJointModelGroup("panda_arm");
+//    const std::vector<std::string>& joint_names = joint_model_group->getVariableNames();
+//
+//    // Set up message to publish lines
+//    auto line_list = initLineList();
+//
+//    ros::Publisher state_pub = n.advertise<moveit_msgs::DisplayRobotState>("display_robot_state_test", 1000);
+//    ros::Publisher graph_pub = n.advertise<visualization_msgs::Marker>("graph_lines", 1000);
+//    ros::Rate loop_rate(1000);
+//
+//    Vertex start_vertex;
+//
+//    // Generate start vertex
+//    auto start_state = stateFromJoints(kinematic_model, START_JOINTS);
+//    // auto start_state = randomState(kinematic_model);
+//    geometry_msgs::Pose start_ee_pose = getStatePose(start_state);
+//    Node* start_node_ptr = new Node(*start_state, start_ee_pose, 0, kinematic_model);
+//    start_vertex = {start_node_ptr};
+//
+//    // Generate end vertex
+//    auto end_state = stateFromJoints(kinematic_model, GOAL_JOINTS);
+//    geometry_msgs::Pose end_ee_pose = getStatePose(end_state);
+//    Node* end_node_ptr = new Node(*end_state, end_ee_pose, 0, kinematic_model);
+//
+//    int goal_step = -1;
+//    bool end_flag = false;
+//    vertex_t goal_vertex;
+//
+//    double radius = 1.5;
+//    RRTstar rrt = RRTstar(radius, start_vertex);
+//
+//    int add_count = 0;
+//    while (ros::ok() && !end_flag)
+//    {
+//        // Pick a random configuration
+//        auto kinematic_state = randomState(kinematic_model);
+//
+//        // With some probability, move towards goal instead
+//        if (uniform(rng) < 0.10 && add_count > 0)
+////        if (true)
+//        {
+//            ROS_INFO("Attempting to extend to goal");
+//            kinematic_state = stateFromJoints(kinematic_model, GOAL_JOINTS);
+//        }
+//        auto ee_pose = getStatePose(kinematic_state);
+//
+//        // Build a node from this configuration, package into a vertex
+//        Node* thisNodePtr = new Node(*kinematic_state, ee_pose, rrt.getNewNodeId(), kinematic_model);
+//        Vertex thisVertex = {thisNodePtr};
+//        vertex_t thisVertexDesc;  // Define here to keep in scope but don't init yet
+//
+//        // Find the closest existing vertex to this one
+//        pair<vertex_t, double> closest_vertex_p = rrt.getClosestVertex(thisNodePtr);
+//        vertex_t closest_vertex = closest_vertex_p.first;
+//        double min = closest_vertex_p.second;
+////        cout << min << endl;
+//
+//        // Back out a node pointer from closest vertex
+//        Vertex otherVertex = rrt.getGraph()[closest_vertex];
+//        Node* otherNodePtr = otherVertex.ptr;
+//
+//        // Use extend to move in direction of new point
+//        auto extended_state = extend(kinematic_model, otherNodePtr->getStatePtr(), thisNodePtr->getStatePtr(), 0.2);
+//        auto extend_ee_pose = getStatePose(extended_state);
+//
+//        // Redefine this node as extended node
+//        Node* extendNodePtr = new Node(*extended_state, extend_ee_pose, rrt.getNewNodeId(), kinematic_model);
+//        Vertex extendVertex = {extendNodePtr};
+//
+//        // Check whether an edge can be made
+//        if (edgeValid(psm, kinematic_model, extendNodePtr, otherNodePtr))
+//        {
+//            // Update the candidate node
+//            // thisNodePtr = new Node(*extended_state, extend_ee_pose, rrt.getNewNodeId(), kinematic_model);
+//            // thisVertex = {thisNodePtr};
+//
+//            // Add node to graph
+//            int step_out = rrt.step(extendVertex);
+//
+//            if (step_out == 0)
+//            {
+////                ROS_INFO("Adding an edge!");
+//                add_count = add_count + 1;
+////                cout << "add_count: " << add_count << endl;
+//            }
+//            else if (step_out == -1)
+//            {
+//                ROS_INFO("Did not add edge. New node already in graph.");
+//            }
+//
+//            // Get the latest graph
+//            graph_t latest_graph = rrt.getGraph();
+//
+//            // Publish graph visualization
+//            if (add_count % 100 == 0)
+//            {
+//                graph_pub.publish(linesFromGraph(latest_graph));
+//                state_pub.publish(displayMsgFromKin(extended_state));
+//            }
+//        }
+//        else
+//        {
+//            ROS_INFO("The closest edge was invalid!");
+//        }
+//
+//        // Check for goal
+//        auto goal_result = rrt.getClosestVertex(end_node_ptr);
+//        ROS_INFO("%f", goal_result.second);
+//        if (goal_step < 0 && goal_result.second < 0.01)
+//        {
+//            ROS_INFO("Goal added to graph!");
+//            goal_step = add_count;
+//            goal_vertex = goal_result.first;
+//        }
+//
+//        if (goal_step > 0 && add_count + goal_step > 2000)
+//        {
+//            ROS_INFO("Added 1000 more nodes after goal, stopping!");
+//            end_flag = true;
+//        }
+//
+//        loop_rate.sleep();
+//    }
+//
+//    if (!ros::ok()) return 0;
+//
+//    // Find path
+//    auto G = rrt.getGraph();
+//    auto path = dijkstra(G, rrt.getFirstVertex(), goal_vertex);
+//    ROS_INFO("Final path has %d waypoints", int(path.size()));
+//
+//    // Set up path marker
+//    auto path_list = initLineList();
+//    path_list.color.r = 1.0;
+//    path_list.color.b = 1.0;
+//    path_list.color.g = 0.0;
+//    path_list.color.a = 1.0;
+//    path_list.scale.x = 0.03;
+//    for (int i = 0; i < path.size() - 1; i++)
+//    {
+//        updateLineList(&path_list, G[path[i]].ptr, G[path[i+1]].ptr);
+//    }
+//
+//    // Publisher
+//    ros::Publisher path_pub = n.advertise<visualization_msgs::Marker>("path_lines", 1000);
+//
+//    // Animate path until node killed
+//    while (ros::ok())
+//    {
+//        path_pub.publish(path_list);
+//        animatePath(kinematic_model, state_pub, G, path);
+//    }
+//
+//}
