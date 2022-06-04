@@ -28,7 +28,7 @@
 
 
 const std::vector<double> START_JOINTS = {0.8007, 0.6576, 0.8774, -0.8879, -0.5002, 1.3726, 2.2410};
-const std::vector<double> GOAL_JOINTS = {-0.5265, 1.0870, 0.2671, -1.6648, 2.6357, 0.4429, -0.8478};
+const std::vector<double> GOAL_JOINTS = {-0.5265, 1.0870, 0.2671, -1.6648, 1.6357, 1.0, -0.8478};
 
 class Node
 {
@@ -469,136 +469,16 @@ int main(int argc, char **argv)
     auto start_state = stateFromJoints(kinematic_model, START_JOINTS);
     auto goal_state = stateFromJoints(kinematic_model, GOAL_JOINTS);
 
-    // Store nodes
-    std::vector<Node> nodes;
-
-    // Init graph
-    graph_t G;
-
-    // Set up message to publish lines
-    auto line_list = initLineList();
-
-    ros::Publisher state_pub = n.advertise<moveit_msgs::DisplayRobotState>("display_robot_state_test", 1000);
-    ros::Publisher graph_pub = n.advertise<visualization_msgs::Marker>("graph_lines", 1000);
-    ros::Publisher path_pub = n.advertise<visualization_msgs::Marker>("path_lines", 1000);
+    ros::Publisher state_pub1 = n.advertise<moveit_msgs::DisplayRobotState>("display_robot_state_start", 1000);
+    ros::Publisher state_pub2 = n.advertise<moveit_msgs::DisplayRobotState>("display_robot_state_goal", 1000);
     ros::Rate loop_rate(100);
-    int count = 1;
-
-    vertex_t start_vertex;
-    vertex_t end_vertex;
-    std::vector<vertex_t> path;
 
     while (ros::ok())
     {
-        // Pick a random configuration
-        auto kinematic_state = randomState(kinematic_model);
-
-        // With some probability, move towards goal instead
-        if (uniform(rng) < 0.05 && count > 1)
-        {
-            ROS_INFO("Attempting to extend to goal");
-            kinematic_state = goal_state;
-        }
-        auto ee_pose = getStatePose(kinematic_state);
-
-        // Build a node from this configuration, package into a vertex
-        Node* thisNodePtr = new Node(*kinematic_state, ee_pose);
-        Vertex thisVertex = {thisNodePtr};
-        vertex_t thisVertexDesc;  // Define here to keep in scope but don't init yet
-
-        // Find the closest existing vertex to this one
-        graph_t::vertex_iterator vclosest;
-        double min = findClosestVertex(G, thisNodePtr, vclosest);
-
-        if (min < 0)
-        {
-            // Check whether node is valid
-            if (!checkCollisionOnce(psm, kinematic_state))
-            {
-                ROS_INFO("This is the first node!");
-                ROS_INFO("Point at %f, %f, %f", ee_pose.position.x, ee_pose.position.y, ee_pose.position.z);
-                nodes.push_back(*thisNodePtr);
-
-                vertex_t thisVertexDesc = boost::add_vertex(thisVertex, G);
-                start_vertex = thisVertexDesc;
-            }
-            else
-            {
-                ROS_INFO("This node was invalid!");
-            }
-        }
-        else
-        {
-            // Back out a node pointer from closest vertex
-            Vertex otherVertex = G[*vclosest];
-            Node* otherNodePtr = otherVertex.ptr;
-
-            // Check whether an edge can be made
-            if (edgeValid(psm, kinematic_model, thisNodePtr, otherNodePtr))
-            {
-                ROS_INFO("Adding an edge!");
-
-                // Use extend to move in direction of new point
-                auto extended_state = extend(kinematic_model, otherNodePtr->getStatePtr(), thisNodePtr->getStatePtr());
-                auto ee_pose = getStatePose(extended_state);
-
-                // Update the candidate node
-                thisNodePtr = new Node(*extended_state, ee_pose);
-                nodes.push_back(*thisNodePtr);
-                thisVertex = {thisNodePtr};
-
-                // Add edge
-                vertex_t otherVertexDesc = *vclosest;
-                thisVertexDesc = boost::add_vertex(thisVertex, G);
-                boost::add_edge(thisVertexDesc, otherVertexDesc, min, G);
-
-                // Visualize edge
-                updateLineList(&line_list, thisNodePtr, otherNodePtr);
-            }
-            else
-            {
-                ROS_INFO("The closest edge was invalid!");
-            }
-        }
-
-        // Attempt to publish new state
-        if (count % 10 == 0)
-        {
-            state_pub.publish(displayMsgFromKin(kinematic_state));
-//            graph_pub.publish(line_list);
-            graph_pub.publish(linesFromGraph(G));
-        }
-
-        // After graph is large try to run dijkstra
-        if (count > 300)
-        {
-            end_vertex = thisVertexDesc;
-            path = dijkstra(G, start_vertex, end_vertex);
-            ROS_INFO("%d", int(path.size()));
-
-            auto path_list = initLineList();
-            path_list.color.r = 1.0;
-            path_list.color.b = 1.0;
-            path_list.color.g = 0.0;
-            path_list.scale.x = 0.03;
-            for (int i = 0; i < path.size() - 1; i++)
-            {
-                updateLineList(&path_list, G[path[i]].ptr, G[path[i+1]].ptr);
-            }
-            path_pub.publish(path_list);
-            break;
-        }
-
+        state_pub1.publish(displayMsgFromKin(start_state));
+        state_pub2.publish(displayMsgFromKin(goal_state));
         ros::spinOnce();
         loop_rate.sleep();
-        count++;
     }
-
-    // If ROS is still good, we broke because we found a path!
-    while(ros::ok())
-    {
-        animatePath(kinematic_model, state_pub, G, path);
-    }
-
     return 0;
 }
