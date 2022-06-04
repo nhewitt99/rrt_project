@@ -402,6 +402,7 @@ visualization_msgs::Marker initLineList()
     line_list.type = visualization_msgs::Marker::LINE_LIST;
     line_list.scale.x = 0.01;
     line_list.color.g = 1.0;
+    line_list.color.r = 1.0;
     line_list.color.a = 1.0;
     return line_list;
 };
@@ -734,8 +735,8 @@ int main(int argc, char **argv)
             if (step_out == 0)
             {
                 ROS_INFO("Adding an edge!");
-                cout << "add_count: " << add_count << endl;
                 add_count = add_count + 1;
+                cout << "add_count: " << add_count << endl;
             }
             else if (step_out == -1)
             {
