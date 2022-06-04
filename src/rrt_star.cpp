@@ -102,6 +102,18 @@ typedef boost::adjacency_list<boost::vecS, boost::vecS, boost::undirectedS, Vert
 typedef boost::graph_traits<graph_t>::vertex_descriptor vertex_t;
 typedef boost::graph_traits<graph_t>::edge_descriptor edge_t;
 
+bool sameJoints(Joints A, Joints B)
+{
+    for (int i=0; i<A.size(); i++)
+    {
+        if (A[i] != B[i])
+        {
+            return false;
+        }
+    }
+    return true;
+}
+
 class RRTstar
 {
     public:
@@ -119,9 +131,15 @@ class RRTstar
             // Set radius
             radius = r;
         }
-        graph_t step(Vertex new_vertex)
+        int step(Vertex new_vertex)
         {
             // Input node is random, not in collision, and extended from an existing node
+
+            // Make sure the new vertex does not have the joints of an existing node on the graph
+            if (jointsInGraph(new_vertex.ptr->getJoints()))
+            {
+                return -1;
+            }
 
             // Add a new random position in joint space as a vertex to the graph
             // This new vertex is guaranteed to be within specified radius of an existing vertex
@@ -142,12 +160,12 @@ class RRTstar
             Cost.push_back(calculateCost(new_node_desc, nearest_neighbor));
 
             // Rewire neighbors so that the new node is now their parent node if this would result in a lower cost for that node
-            rewireNeighbors(new_node_desc, neighbors);
+            rewireNeighbors(new_node_desc, neighbors, nearest_neighbor);
 
             // Link together new vertex with its nearest neighbor
             linkNewVertex(new_node_desc, nearest_neighbor);
 
-            return G;
+            return 0;
         }
         int getNewNodeId()
         {
@@ -270,17 +288,30 @@ class RRTstar
             return neighbors;
         }
 
+        bool jointsInGraph(Joints joints)
+        {
+            graph_t::vertex_iterator v, v_end;
+            for (boost::tie(v, v_end) = boost::vertices(G); v != v_end; ++v)
+            {
+                if (sameJoints(G[*v].ptr->getJoints(), joints))
+                {
+                    return true;
+                }
+            }
+            return false;
+        }
+
         vertex_t getNearestNeighbor(vertex_t new_node, vector<vertex_t> neighbors)
         {
             cout << "getNearestNeighbor()" << endl;
 
             // If there are 0 neighbors, then the new node is the root node.
             // It's nearest neighbor is itself
-            if (neighbors.size() == 0)
-            {
-                // cout << "return new_node" << endl;
-                return new_node;
-            }
+            // if (neighbors.size() == 0)
+            // {
+            //     // cout << "return new_node" << endl;
+            //     return new_node;
+            // }
 
             // Initialze variables for storing nearest neighbor info
             double min_distance = -1.0;
@@ -327,28 +358,31 @@ class RRTstar
             boost::remove_edge(A, B, G);
         }
 
-        void rewireNeighbors(vertex_t new_vertex, vector<vertex_t> neighbors)
+        void rewireNeighbors(vertex_t new_vertex, vector<vertex_t> neighbors, vertex_t nearest_neighbor)
         {
             cout << "rewireNeighbors()" << endl;
             for (vertex_t& neighbor: neighbors)
             {
-                // If jumping from the new vertex to this neighbor is cheaper than jumping from the
-                // neighbor's parent to the neighbor, then the new vertex is now the parent.
-                // Congrats and good luck on raising that vertex to be a good upstanding citizen
-                // cout << "Cost.size(): " << Cost.size() << " | Id(new_vertex): " << Id(new_vertex) << " | Id(neighbor): " << Id(neighbor) << endl;
-                if (Cost[Id(new_vertex)] + calculateCost(new_vertex, neighbor) < Cost[Id(neighbor)])
+                if (Id(nearest_neighbor) != Id(neighbor))
                 {
-                    cout << "if true" << endl;
-                    // Set new cost for the neighbor
-                    Cost[Id(neighbor)] = Cost[Id(new_vertex)] + calculateCost(new_vertex, neighbor);
-                    // cout << "set cost" << endl;
+                    // If jumping from the new vertex to this neighbor is cheaper than jumping from the
+                    // neighbor's parent to the neighbor, then the new vertex is now the parent.
+                    // Congrats and good luck on raising that vertex to be a good upstanding citizen
+                    // cout << "Cost.size(): " << Cost.size() << " | Id(new_vertex): " << Id(new_vertex) << " | Id(neighbor): " << Id(neighbor) << endl;
+                    if (Cost[Id(new_vertex)] + calculateCost(new_vertex, neighbor) < Cost[Id(neighbor)])
+                    {
+                        cout << "if true" << endl;
+                        // Set new cost for the neighbor
+                        Cost[Id(neighbor)] = Cost[Id(new_vertex)] + calculateCost(new_vertex, neighbor);
+                        // cout << "set cost" << endl;
 
-                    // cout << "Parents.size() " << Parents.size() << endl;
-                    // Delink the neighbor from its original parent
-                    deLinkVertices(neighbor, Parents[Id(neighbor)]);
+                        // cout << "Parents.size() " << Parents.size() << endl;
+                        // Delink the neighbor from its original parent
+                        deLinkVertices(neighbor, Parents[Id(neighbor)]);
 
-                    // Link the neighbor as a "new" vertex to the actually new vertex
-                    linkNewVertex(neighbor, new_vertex);
+                        // Link the neighbor as a "new" vertex to the actually new vertex
+                        linkNewVertex(neighbor, new_vertex);
+                    }
                 }
             }
         }
@@ -535,7 +569,7 @@ bool edgeValid(std::shared_ptr<planning_scene_monitor::PlanningSceneMonitor> psm
 // Generate a state that extends towards another in c-space, less than some length in rads
 moveit::core::RobotStatePtr extend(const moveit::core::RobotModelConstPtr& kinematic_model,
                                    moveit::core::RobotStatePtr state1,
-                                   moveit::core::RobotStatePtr state2, double max=0.45)
+                                   moveit::core::RobotStatePtr state2, double max)
 {
     // Get joint parameters from model
     const moveit::core::JointModelGroup* joint_model_group = kinematic_model->getJointModelGroup("panda_arm");
@@ -679,7 +713,7 @@ int main(int argc, char **argv)
         Node* otherNodePtr = otherVertex.ptr;
 
         // Use extend to move in direction of new point
-        auto extended_state = extend(kinematic_model, otherNodePtr->getStatePtr(), thisNodePtr->getStatePtr());
+        auto extended_state = extend(kinematic_model, otherNodePtr->getStatePtr(), thisNodePtr->getStatePtr(), radius-0.01);
         auto extend_ee_pose = getStatePose(extended_state);
 
         // Redefine this node as extended node
@@ -690,18 +724,28 @@ int main(int argc, char **argv)
         // Check whether an edge can be made
         if (edgeValid(psm, kinematic_model, extendNodePtr, otherNodePtr))
         {
-            ROS_INFO("Adding an edge!");
-            cout << "add_count: " << add_count << endl;
-            add_count = add_count + 1;
-
             // Update the candidate node
             // thisNodePtr = new Node(*extended_state, extend_ee_pose, rrt.getNewNodeId(), kinematic_model);
             // thisVertex = {thisNodePtr};
 
             // Add node to graph
-            graph_t latest_graph = rrt.step(extendVertex);
+            int step_out = rrt.step(extendVertex);
 
-            // Throttle publishing
+            if (step_out == 0)
+            {
+                ROS_INFO("Adding an edge!");
+                cout << "add_count: " << add_count << endl;
+                add_count = add_count + 1;
+            }
+            else if (step_out == -1)
+            {
+                ROS_INFO("Did not add edge. New node already in graph.");
+            }
+
+            // Get the latest graph
+            graph_t latest_graph = rrt.getGraph();
+
+            // Publish graph visualization
             graph_pub.publish(linesFromGraph(latest_graph));
         }
         else
