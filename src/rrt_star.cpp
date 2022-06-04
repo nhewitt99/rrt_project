@@ -17,6 +17,7 @@
 
 #include <boost/graph/graph_traits.hpp>
 #include <boost/graph/adjacency_list.hpp>
+#include <boost/graph/dijkstra_shortest_paths.hpp>
 
 #include <moveit_msgs/RobotState.h>
 #include <moveit_msgs/DisplayRobotState.h>
@@ -98,7 +99,7 @@ class Node
 
 struct Vertex {Node* ptr;};
 
-typedef boost::adjacency_list<boost::vecS, boost::vecS, boost::undirectedS, Vertex, double> graph_t;
+typedef boost::adjacency_list<boost::vecS, boost::vecS, boost::undirectedS, Vertex, boost::property<boost::edge_weight_t, double>> graph_t;
 typedef boost::graph_traits<graph_t>::vertex_descriptor vertex_t;
 typedef boost::graph_traits<graph_t>::edge_descriptor edge_t;
 
@@ -121,6 +122,7 @@ class RRTstar
         {
             // Create graph with root node
             vertex_t start_vertex_desc = addVertex(start_vertex);
+            first_vertex = start_vertex_desc;
 
             // Assign the start vertex a cost of 0
             Cost.push_back(0.0);
@@ -175,6 +177,10 @@ class RRTstar
         {
             return G;
         }
+        vertex_t getFirstVertex()
+        {
+            return first_vertex;
+        }
         pair<vertex_t, double> getClosestVertex(Node* new_node_ptr)
         {
             double min_distance = -1.0;
@@ -210,6 +216,9 @@ class RRTstar
         // Graph for storing search results
         graph_t G;
 
+        // Descriptor for the first vertex added to graph
+        vertex_t first_vertex;
+
         // Parent for each vertex. Vertex id is index.
         vector<vertex_t> Parents;
 
@@ -222,7 +231,7 @@ class RRTstar
         // Add a new node as a vertex to the graph. Do not link it to any other vertices.
         vertex_t addVertex(Vertex new_vertex)
         {
-            cout << "addVertex()" << endl;
+//            cout << "addVertex()" << endl;
             // Node* node_ptr = &new_node;
             // Vertex vertex = {node_ptr};
             return boost::add_vertex(new_vertex, G);
@@ -247,7 +256,7 @@ class RRTstar
         // Get all the vertices within
         vector<vertex_t> getNeighbors(vertex_t new_node_desc)
         {
-            cout << "getNeighbors()" << endl;
+//            cout << "getNeighbors()" << endl;
             // Unpack new node
             Vertex new_node_vertex = G[new_node_desc];
             Joints new_node_joints = new_node_vertex.ptr->getJoints();
@@ -303,7 +312,7 @@ class RRTstar
 
         vertex_t getNearestNeighbor(vertex_t new_node, vector<vertex_t> neighbors)
         {
-            cout << "getNearestNeighbor()" << endl;
+//            cout << "getNearestNeighbor()" << endl;
 
             // If there are 0 neighbors, then the new node is the root node.
             // It's nearest neighbor is itself
@@ -345,7 +354,7 @@ class RRTstar
 
         void linkNewVertex(vertex_t new_vertex, vertex_t existing_vertex)
         {
-            cout << "linkNewVertex" << endl;
+//            cout << "linkNewVertex" << endl;
 
             // Assign parent to new vertex
             Parents[Id(new_vertex)] = existing_vertex;
@@ -354,13 +363,13 @@ class RRTstar
 
         void deLinkVertices(vertex_t A, vertex_t B)
         {
-            cout << "deLinkVertices" << endl;
+//            cout << "deLinkVertices" << endl;
             boost::remove_edge(A, B, G);
         }
 
         void rewireNeighbors(vertex_t new_vertex, vector<vertex_t> neighbors, vertex_t nearest_neighbor)
         {
-            cout << "rewireNeighbors()" << endl;
+//            cout << "rewireNeighbors()" << endl;
             for (vertex_t& neighbor: neighbors)
             {
                 if (Id(nearest_neighbor) != Id(neighbor))
@@ -371,7 +380,7 @@ class RRTstar
                     // cout << "Cost.size(): " << Cost.size() << " | Id(new_vertex): " << Id(new_vertex) << " | Id(neighbor): " << Id(neighbor) << endl;
                     if (Cost[Id(new_vertex)] + calculateCost(new_vertex, neighbor) < Cost[Id(neighbor)])
                     {
-                        cout << "if true" << endl;
+//                        cout << "if true" << endl;
                         // Set new cost for the neighbor
                         Cost[Id(neighbor)] = Cost[Id(new_vertex)] + calculateCost(new_vertex, neighbor);
                         // cout << "set cost" << endl;
@@ -403,7 +412,7 @@ visualization_msgs::Marker initLineList()
     line_list.scale.x = 0.01;
     line_list.color.g = 1.0;
     line_list.color.r = 1.0;
-    line_list.color.a = 1.0;
+    line_list.color.a = 0.3;
     return line_list;
 };
 
@@ -427,7 +436,7 @@ void updateLineList(visualization_msgs::Marker* m, Node* node1ptr, Node* node2pt
 // Build a line_list marker from a graph
 visualization_msgs::Marker linesFromGraph(graph_t G)
 {
-    cout << "linesFromGraph()" << endl;
+//    cout << "linesFromGraph()" << endl;
     // Init an empty list
     auto ret = initLineList();
 
@@ -582,8 +591,8 @@ moveit::core::RobotStatePtr extend(const moveit::core::RobotModelConstPtr& kinem
     state2->copyJointGroupPositions(joint_model_group, end_values);
 
 
-    std::cout << current_values[0] << std::endl;
-    std::cout << end_values[0] << std::endl;
+//    std::cout << current_values[0] << std::endl;
+//    std::cout << end_values[0] << std::endl;
 
     // Get difference
     std::vector<double> diff_values;
@@ -635,6 +644,60 @@ moveit_msgs::DisplayRobotState displayMsgFromKin(moveit::core::RobotStatePtr kin
         return display_msg;
 }
 
+
+// Reverse a path for dijkstra
+std::vector<vertex_t> getPath(const graph_t G, const std::vector<vertex_t>& pMap, const vertex_t& source, const vertex_t& destination)
+{
+    std::vector<vertex_t> path;
+    vertex_t current = destination;
+    while (current != source)
+    {
+        path.push_back(current);
+        current = pMap[current];
+    }
+    path.push_back(source);
+    return path;
+}
+
+
+// Dijkstra
+std::vector<vertex_t> dijkstra(const graph_t& G, const vertex_t source, const vertex_t destination)
+{
+    const int numVertices = boost::num_vertices(G);
+    std::vector<double> distances(numVertices);
+    std::vector<vertex_t> pMap(numVertices);
+
+    auto distanceMap = boost::predecessor_map(
+            boost::make_iterator_property_map(pMap.begin(), boost::get(boost::vertex_index, G))).distance_map(
+            boost::make_iterator_property_map(distances.begin(), boost::get(boost::vertex_index, G)));
+//    auto distanceMap = boost::predecessor_map(&pMap[0]).distance_map(&distances[0]);
+
+    boost::dijkstra_shortest_paths(G, source, distanceMap);
+    return getPath(G, pMap, source, destination);
+}
+
+
+// Animate a path
+void animatePath(const moveit::core::RobotModelConstPtr& kinematic_model, ros::Publisher pub, graph_t G, std::vector<vertex_t> path)
+{
+    ros::Rate loop_rate(20);
+    for (int i = 0; i < path.size() - 1; i++)
+    {
+        auto state1 = G[path[i]].ptr->getStatePtr();
+        auto state2 = G[path[i+1]].ptr->getStatePtr();
+        auto inter_vec = interpolateStates(kinematic_model, state1, state2);
+
+        for (auto state : inter_vec)
+        {
+            pub.publish(displayMsgFromKin(state));
+            loop_rate.sleep();
+            if (!ros::ok()) break;
+        }
+        if (!ros::ok()) break;
+    }
+}
+
+
 int main(int argc, char **argv)
 {
     ros::init(argc, argv, "devtests");
@@ -661,11 +724,9 @@ int main(int argc, char **argv)
 
     ros::Publisher state_pub = n.advertise<moveit_msgs::DisplayRobotState>("display_robot_state_test", 1000);
     ros::Publisher graph_pub = n.advertise<visualization_msgs::Marker>("graph_lines", 1000);
-    ros::Rate loop_rate(1);
-    int count = 1;
+    ros::Rate loop_rate(1000);
 
     Vertex start_vertex;
-    Vertex end_vertex;
 
     // Generate start vertex
     auto start_state = stateFromJoints(kinematic_model, START_JOINTS);
@@ -678,20 +739,23 @@ int main(int argc, char **argv)
     auto end_state = stateFromJoints(kinematic_model, GOAL_JOINTS);
     geometry_msgs::Pose end_ee_pose = getStatePose(end_state);
     Node* end_node_ptr = new Node(*end_state, end_ee_pose, 0, kinematic_model);
-    end_vertex = {end_node_ptr};
 
-    double radius = 0.5;
+    int goal_step = -1;
+    bool end_flag = false;
+    vertex_t goal_vertex;
+
+    double radius = 1.5;
     RRTstar rrt = RRTstar(radius, start_vertex);
 
     int add_count = 0;
-    while (ros::ok())
+    while (ros::ok() && !end_flag)
     {
         // Pick a random configuration
         auto kinematic_state = randomState(kinematic_model);
 
         // With some probability, move towards goal instead
-        // if (uniform(rng) < 0.999 && count > 1)
-        if (true)
+        if (uniform(rng) < 0.10 && add_count > 0)
+//        if (true)
         {
             ROS_INFO("Attempting to extend to goal");
             kinematic_state = stateFromJoints(kinematic_model, GOAL_JOINTS);
@@ -707,20 +771,19 @@ int main(int argc, char **argv)
         pair<vertex_t, double> closest_vertex_p = rrt.getClosestVertex(thisNodePtr);
         vertex_t closest_vertex = closest_vertex_p.first;
         double min = closest_vertex_p.second;
-        cout << min << endl;
+//        cout << min << endl;
 
         // Back out a node pointer from closest vertex
         Vertex otherVertex = rrt.getGraph()[closest_vertex];
         Node* otherNodePtr = otherVertex.ptr;
 
         // Use extend to move in direction of new point
-        auto extended_state = extend(kinematic_model, otherNodePtr->getStatePtr(), thisNodePtr->getStatePtr(), radius-0.01);
+        auto extended_state = extend(kinematic_model, otherNodePtr->getStatePtr(), thisNodePtr->getStatePtr(), 0.2);
         auto extend_ee_pose = getStatePose(extended_state);
 
         // Redefine this node as extended node
         Node* extendNodePtr = new Node(*extended_state, extend_ee_pose, rrt.getNewNodeId(), kinematic_model);
         Vertex extendVertex = {extendNodePtr};
-        state_pub.publish(displayMsgFromKin(extended_state));
 
         // Check whether an edge can be made
         if (edgeValid(psm, kinematic_model, extendNodePtr, otherNodePtr))
@@ -734,9 +797,9 @@ int main(int argc, char **argv)
 
             if (step_out == 0)
             {
-                ROS_INFO("Adding an edge!");
+//                ROS_INFO("Adding an edge!");
                 add_count = add_count + 1;
-                cout << "add_count: " << add_count << endl;
+//                cout << "add_count: " << add_count << endl;
             }
             else if (step_out == -1)
             {
@@ -747,13 +810,63 @@ int main(int argc, char **argv)
             graph_t latest_graph = rrt.getGraph();
 
             // Publish graph visualization
-            graph_pub.publish(linesFromGraph(latest_graph));
+            if (add_count % 100 == 0)
+            {
+                graph_pub.publish(linesFromGraph(latest_graph));
+                state_pub.publish(displayMsgFromKin(extended_state));
+            }
         }
         else
         {
             ROS_INFO("The closest edge was invalid!");
         }
+
+        // Check for goal
+        auto goal_result = rrt.getClosestVertex(end_node_ptr);
+        ROS_INFO("%f", goal_result.second);
+        if (goal_step < 0 && goal_result.second < 0.01)
+        {
+            ROS_INFO("Goal added to graph!");
+            goal_step = add_count;
+            goal_vertex = goal_result.first;
+        }
+
+        if (goal_step > 0 && add_count + goal_step > 2000)
+        {
+            ROS_INFO("Added 1000 more nodes after goal, stopping!");
+            end_flag = true;
+        }
+
         loop_rate.sleep();
+    }
+
+    if (!ros::ok()) return 0;
+
+    // Find path
+    auto G = rrt.getGraph();
+    auto path = dijkstra(G, rrt.getFirstVertex(), goal_vertex);
+    ROS_INFO("Final path has %d waypoints", int(path.size()));
+
+    // Set up path marker
+    auto path_list = initLineList();
+    path_list.color.r = 1.0;
+    path_list.color.b = 1.0;
+    path_list.color.g = 0.0;
+    path_list.color.a = 1.0;
+    path_list.scale.x = 0.03;
+    for (int i = 0; i < path.size() - 1; i++)
+    {
+        updateLineList(&path_list, G[path[i]].ptr, G[path[i+1]].ptr);
+    }
+
+    // Publisher
+    ros::Publisher path_pub = n.advertise<visualization_msgs::Marker>("path_lines", 1000);
+
+    // Animate path until node killed
+    while (ros::ok())
+    {
+        path_pub.publish(path_list);
+        animatePath(kinematic_model, state_pub, G, path);
     }
 
 }
